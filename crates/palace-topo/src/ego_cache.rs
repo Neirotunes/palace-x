@@ -122,6 +122,7 @@ mod tests {
             edges: vec![],
             num_vertices: n,
             num_edges: 0,
+            max_ego_edges: None,
         }
     }
 

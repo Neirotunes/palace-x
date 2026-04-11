@@ -1,155 +1,212 @@
-# Palace-X (Silicon-Native)
+<div align="center">
 
-> Copyright (c) 2026 M.Diach — Proprietary. All Rights Reserved.
+# P A L A C E - X
+### Topological Memory Engine for Autonomous AI Agents
 
-**High-performance Silicon-Native memory system for autonomous AI agents on Apple M-series hardware.**
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://opensource.org/licenses/AGPL-3.0)
+[![Rust](https://img.shields.io/badge/Rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
+[![Platform: Apple Silicon](https://img.shields.io/badge/Platform-Apple%20Silicon-lightgrey.svg)](https://developer.apple.com/apple-silicon/)
+[![SIMD: NEON / AVX-512](https://img.shields.io/badge/SIMD-NEON%20%2F%20AVX--512-green.svg)](#simd-backends)
 
-Palace-X transforms the "memory palace" metaphor into a deterministic, hardware-native engineering construct. Optimized for Apple Silicon (M1/M2/M3), it replaces LLM-in-the-loop classification with **NEON-accelerated** topological distillation and binary quantization. By saturating the **Firestorm P-cores** and leveraging **UMA Zero-Copy Arenas**, it achieves sub-10ms latency for million-node search operations.
+---
+
+**Palace-X** is a hardware-accelerated vector search engine that leverages **Algebraic Topology** to redefine semantic search. By replacing standard LLM-in-the-loop classification with topological distillation, it identifies structural connectivity that pure cosine similarity misses.
+
+</div>
+
+<br/>
+
+## Benchmark Results (SIFT-128, 10K vectors)
+
+All numbers measured on SIFT-10K dataset (128 dimensions, 10,000 base vectors, 100 queries).
+Reproducible via `cargo run -p palace-bench --release`.
+
+<!-- BENCHMARK_TABLE_START -->
+
+> **Run the benchmarks yourself to fill this table with real numbers:**
+>
+> ```bash
+> mkdir -p data
+> cargo run -p palace-bench --release
+> # SIFT-10K will be auto-downloaded on first run
+> ```
+>
+> The benchmark suite outputs a Markdown table you can paste here directly.
+
+<!-- BENCHMARK_TABLE_END -->
+
+### Ablation: α/β Parameter Sweep
+
+The topological reranking metric $d_{total}$ combines cosine distance with structural connectivity:
+
+$$d_{total}(x, y) = \alpha \cdot d_{cosine}(x, y) + \beta \cdot \exp(-\beta_1(C_{xy}) / |E(C_{xy})|)$$
+
+Run the ablation study to measure the effect of β₁ reranking vs pure cosine:
+
+```bash
+cargo test -p palace-topo --test ablation_study -- --nocapture
+```
+
+### Vamana α-Pruning Comparison
+
+The neighbor selection heuristic uses α-RNG pruning (Vamana-style). Comparison of α values:
+
+```bash
+cargo test -p palace-graph --test recall_test test_alpha_pruning -- --nocapture
+```
+
+<br/>
+
+## Why Topological Reranking?
+
+Pure vector similarity often fails to capture the "contextual bridge" between concepts. Palace-X computes the **First Betti Number (β₁)** on 2-hop ego-graphs to measure structural connectivity. High cycle density indicates robust semantic relationships.
+
+The `palace-topo` module now supports two topological metrics:
+
+1. **Raw β₁** — number of independent cycles in the ego-graph (fast, simple)
+2. **Persistent homology** — full H₀/H₁ persistence diagrams that capture multi-scale topological features. More nuanced than raw β₁ but computationally heavier.
+
+<br/>
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                    palace-engine                     │
-│              (Async Actor Pipeline)                  │
-│                                                     │
-│  ┌───────────────────────────────────────────────┐  │
-│  │              palace-storage                    │  │
-│  │           (MemoryPalace impl)                 │  │
-│  │                                               │  │
-│  │  Stage 1: NSW Coarse Search ─────────────┐   │  │
-│  │    palace-graph (Hub-Highway NSW)         │   │  │
-│  │    palace-quant (Binary Hamming SIMD)     │   │  │
-│  │                                           │   │  │
-│  │  Stage 2: Topological Rerank ◄────────────┘   │  │
-│  │    palace-topo (β₁ ego-graphs)                │  │
-│  │    palace-bitplane (Precision Fetch)           │  │
-│  └───────────────────────────────────────────────┘  │
-│                                                     │
-│  palace-core (Types, Traits, Errors)                │
-│  palace-optimizer (Mach/Silicon Affinity Layer)      │
-└─────────────────────────────────────────────────────┘
+Query Vector (f32)
+       │
+       ▼
+┌──────────────────┐
+│  Stage 1: Coarse │  NSW graph search with Hamming distance
+│  (SIMD-fast)     │  Entry via hub-highway cache
+│  ef candidates   │  α-RNG pruned neighbor selection
+└────────┬─────────┘
+         │
+┌────────▼──────────────┐
+│  Stage 2: Topological  │  Ego-graph analysis (capped at 500 edges)
+│  Reranking (optional)  │  β₁ or persistence diagram scoring
+│  d_total metric        │  Parallel via Rayon + LRU cache
+└────────┬──────────────┘
+         │
+         ▼
+   Final Top-K Results
 ```
 
-## Crates
+### Crates
 
 | Crate | Description |
 |-------|-------------|
-| `palace-core` | Foundation types: `NodeId`, `Fragment`, `MetaData`, `MemoryProvider` trait, error types |
-| `palace-quant` | Binary quantization + SIMD Hamming distance (AVX-512 VPOPCNTDQ / NEON / scalar fallback) |
-| `palace-graph` | Flat NSW index with Hub-Highway optimization (arXiv:2412.01940) |
-| `palace-topo` | Topological reranking: ego-graph construction, β₁ via Union-Find, normalized d_total metric |
-| `palace-bitplane` | IEEE 754 bit-plane disaggregation for precision-proportional fetch (inspired by TRACE) |
-| `palace-storage` | `MemoryPalace` — concrete `MemoryProvider` with two-stage retrieval + graceful degradation |
-| `palace-engine` | Tokio actor pipeline: concurrent ingest, search, vacuum via mpsc channels |
-| `palace-bench` | End-to-end benchmark suite |
+| `palace-core` | Foundation types: `NodeId`, `Fragment`, `MetaData`, `SearchConfig` |
+| `palace-quant` | RaBitQ (1-bit & 4-bit) with FHT rotation + SIMD Hamming |
+| `palace-graph` | Hub-Highway NSW with Vamana α-pruning (`α=1.2` default) |
+| `palace-topo` | Ego-graph analysis, β₁, persistent homology (H₀/H₁), d_total |
+| `palace-bitplane` | IEEE 754 bit-plane disaggregation for progressive retrieval |
+| `palace-storage` | Async `MemoryPalace` storage provider |
+| `palace-engine` | High-level orchestration and async/await interface |
+| `palace-bench` | SIFT-128 benchmarks with recall/QPS measurement |
+| `palace-optimizer` | Silicon-native SIMD + threading (M1-M4 / AVX-512) |
 
-## The Math
+### Key Parameters
 
-Palace-X uses a two-stage retrieval pipeline:
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `M` (max_neighbors) | 32 | NSW edges per node |
+| `ef_construction` | 200 | Beam width during index build |
+| `ef_search` | 64 | Beam width during search |
+| `alpha` (pruning) | 1.2 | Vamana α-RNG relaxation factor |
+| `α` (d_total) | 0.7 | Cosine distance weight |
+| `β` (d_total) | 0.3 | Topological penalty weight |
+| `max_ego_edges` | 500 | Hard cap on ego-graph edges (bounds O(K²)) |
 
-**Stage 1 — Coarse Search** (5–15 ms on 10k docs):  
-Binary-quantized NSW search using Hamming distance via SIMD POPCNT.
-
-**Stage 2 — Topological Rerank** (top-K candidates only):  
-For each candidate, build a 2-hop ego-graph and compute the normalized first Betti number:
-
-```
-d_total(x, y) = α · d_cosine(x, y) + β · exp(−β₁(C_xy) / max(|E(C_xy)|, 1))
-```
-
-Where:
-- `β₁ = β₀ − χ = β₀ − V + E` (number of independent cycles, via Union-Find in O(V+E))
-- `|E|` = edge count in the ego-graph (normalization for continuous spectrum)
-- Higher cycle density → stronger structural connection → lower distance
-
-**Graceful Degradation:**
-- If mantissa planes unavailable (NVMe failure) → fall back to coarse search
-- If ego-graph too large or corrupted → fall back to pure cosine ranking
+<br/>
 
 ## Quick Start
 
-```rust
-use palace_engine::PalaceEngine;
-use palace_core::{MetaData, SearchConfig};
-
-#[tokio::main]
-async fn main() {
-    // Start the engine (384-dim for all-MiniLM-L6-v2 embeddings)
-    let engine = PalaceEngine::start(384);
-
-    // Ingest knowledge
-    let embedding = vec![0.1f32; 384]; // your embedding here
-    let meta = MetaData {
-        timestamp: 1712793600,
-        source: "conversation".into(),
-        tags: vec!["user-preference".into()],
-        extra: Default::default(),
-    };
-    let id = engine.ingest(embedding, meta).await.unwrap();
-
-    // Search with topological reranking
-    let query = vec![0.1f32; 384];
-    let config = SearchConfig {
-        limit: 10,
-        enable_reranking: true,
-        alpha: 0.7,   // cosine weight
-        beta: 0.3,    // topological weight
-        rerank_k: 50,  // Stage 2 candidates
-    };
-    let results = engine.search(query, config).await.unwrap();
-
-    for fragment in &results {
-        println!("Node {:?} — score: {:.4}", fragment.node_id, fragment.score);
-    }
-
-    engine.shutdown().await.unwrap();
-}
-```
-
-## Building
-
 ```bash
-# Debug build
-cargo build
-
-# Release build (LTO + native CPU)
+# Clone and build
+git clone https://github.com/Neirotunes/palace-x.git
+cd palace-x
 cargo build --release
 
-# Run benchmarks
-cargo run --release -p palace-bench
-
-# Run all tests
+# Run tests
 cargo test --workspace
+
+# Run benchmarks (downloads SIFT-10K automatically)
+mkdir -p data
+cargo run -p palace-bench --release
+
+# Run ablation study
+cargo test -p palace-topo --test ablation_study -- --nocapture
+
+# Run α-pruning comparison
+cargo test -p palace-graph --test recall_test test_alpha_pruning -- --nocapture
 ```
 
-## SIMD Support
+### Programmatic Usage
 
-Palace-X auto-detects CPU features at runtime:
+```rust
+use palace_graph::{NswIndex, MetaData};
+use palace_quant::rabitq::RaBitQIndex;
 
-| Feature | Instruction | Platform | Throughput |
-|---------|-------------|----------|------------|
-| AVX-512 VPOPCNTDQ | `_mm512_popcnt_epi64` | Intel Ice Lake+ / Sapphire Rapids | ~200 GB/s |
-| NEON | `vcntq_u8` | Apple M1–M4 / ARM servers | ~40 GB/s |
-| Scalar fallback | `u64::count_ones()` | Any platform | ~1.5 GB/s |
+// Build index with α=1.2 pruning
+let index = NswIndex::with_alpha(128, 32, 200, 1.2);
 
-Detection is cached in a `static AtomicU8` — zero overhead after first call.
+// Insert vectors
+for (i, vec) in vectors.iter().enumerate() {
+    index.insert(vec.clone(), MetaData { label: format!("{}", i) });
+}
+index.update_hub_scores();
 
-## Performance Targets
+// Search
+let results = index.search(&query, Some(64)); // ef=64
 
-| Operation | MemPalace Raw (Python) | Palace-X (Silicon-Native) |
-|-----------|----------------------|---------------------------|
-| Search Latency (10k docs) | 20–50 ms | **3–8 ms** (P-Core Pinned) |
-| Hamming Throughput | ~1.5 GB/s (NumPy) | **45-220 GB/s** (NEON/AVX-512) |
-| Memory per 1M nodes (384d) | ~6 GB (FP32) | ~1.1 GB (BitPlane + UMA) |
+// Optional: RaBitQ reranking for better recall
+let rq = RaBitQIndex::with_centroid(128, centroid, 42);
+let codes: Vec<_> = vectors.iter().map(|v| rq.encode_multibit(v, 4)).collect();
+let rq_query = rq.encode_query(&query);
+// Rerank candidates with 4-bit asymmetric distance...
+```
 
-## References
+<br/>
 
-- [Hub-Highway Hypothesis](https://arxiv.org/abs/2412.01940) — "Down with the Hierarchy: The 'H' in HNSW Stands for 'Hubs'"
-- [TRACE: Bit-Plane Disaggregation](https://arxiv.org/abs/2509.03377) — Precision-proportional memory access
-- [LongMemEval (ICLR 2025)](https://arxiv.org/abs/2410.10813) — Long-term memory benchmark
-- [MemPalace](https://github.com/milla-jovovich/mempalace) — Original Python implementation
+## Quantization Methods
 
-## License
+| Method | Storage/vec | Recall | Description |
+|--------|------------|--------|-------------|
+| Naive binary | D/8 B | Low | Sign-bit quantization + Hamming |
+| RaBitQ 1-bit | D/8 + 16 B | High | Random rotation + scalar correction |
+| RaBitQ 4-bit | D/2 + 16 B | Higher | 4 bit-planes + asymmetric distance |
+| Full FP32 | D×4 B | Perfect | Brute-force baseline |
 
-AGPL-3.0-or-later — see [LICENSE](LICENSE) for details.
+RaBitQ uses a Fast Hadamard Transform (FHT) for O(D log D) random rotation instead of O(D²) matrix multiplication. The 4-bit variant stores each dimension as 4 bit-planes, enabling popcount-based distance estimation with significantly better recall than 1-bit.
+
+<br/>
+
+## Persistent Homology
+
+The `palace-topo::persistence` module upgrades the topological metric from raw β₁ to full persistence diagrams:
+
+- **H₀ persistence**: Tracks connected component merges via weight-sorted Union-Find
+- **H₁ persistence**: Detects cycle birth/death via flag complex triangle enumeration
+- **Total persistence score**: Weighted sum of feature lifetimes, replaces β₁ in d_total
+
+```rust
+use palace_topo::persistence::{persistence_diagram, d_total_persistence};
+
+let diagram = persistence_diagram(&ego_graph, &weight_fn);
+println!("H₀ features: {}", diagram.count_dim(0));
+println!("H₁ features: {}", diagram.count_dim(1));
+println!("Total persistence: {}", diagram.total_persistence());
+
+// Use in distance metric
+let d = d_total_persistence(cosine_dist, &ego_graph, &weight_fn, 0.7, 0.3, 1.0);
+```
+
+<br/>
+
+<div align="center">
+
+### Built for the Future of Autonomous Systems
+Copyright (c) 2026 M. Diach — Licensed under [AGPL-3.0-or-later](LICENSE)
+
+*Optimized for Apple Silicon (M1-M4) and AVX-512 based hardware.*
+
+</div>

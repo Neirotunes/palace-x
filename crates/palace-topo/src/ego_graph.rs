@@ -24,6 +24,9 @@ pub struct EgoGraph {
     pub num_vertices: usize,
     /// Total number of edges
     pub num_edges: usize,
+    /// Hard cap on ego-graph edges. When set, reduces worst-case complexity from O(K²) to O(max_ego_edges).
+    /// Default: None (unlimited). Recommended: 500.
+    pub max_ego_edges: Option<usize>,
 }
 
 impl EgoGraph {
@@ -42,6 +45,7 @@ impl EgoGraph {
     ///
     /// # Returns
     /// An EgoGraph containing the 2-hop neighborhood and all edges within it.
+    /// Use `.with_cap(500)` to bound edge count for complexity control.
     pub fn build_pair<F>(x: NodeId, y: NodeId, neighbors_fn: F) -> Self
     where
         F: Fn(NodeId) -> Vec<NodeId>,
@@ -125,6 +129,7 @@ impl EgoGraph {
             edges: edges_vec,
             num_vertices,
             num_edges,
+            max_ego_edges: None,
         }
     }
 
@@ -137,6 +142,7 @@ impl EgoGraph {
     ///
     /// # Returns
     /// An EgoGraph containing the k-hop neighborhood and all edges within it.
+    /// Use `.with_cap(500)` to bound edge count for complexity control.
     pub fn build_single<F>(node: NodeId, hops: usize, neighbors_fn: F) -> Self
     where
         F: Fn(NodeId) -> Vec<NodeId>,
@@ -191,7 +197,76 @@ impl EgoGraph {
             edges: edges_vec,
             num_vertices,
             num_edges,
+            max_ego_edges: None,
         }
+    }
+
+    /// Set a hard cap on ego-graph edges for complexity control.
+    ///
+    /// Truncates edges to the first `max_edges` edges and updates `num_edges`.
+    /// This bounds the worst-case complexity of topological computations from O(K²)
+    /// to O(max_edges), where K is the number of vertices.
+    ///
+    /// # Default
+    /// `max_ego_edges` defaults to `None` (unlimited). Recommended: 500 edges.
+    ///
+    /// # Arguments
+    /// * `max_edges` - Maximum number of edges to retain
+    ///
+    /// # Example
+    /// ```ignore
+    /// let ego = EgoGraph::build_pair(...)
+    ///     .with_cap(500);
+    /// ```
+    pub fn with_cap(mut self, max_edges: usize) -> Self {
+        if self.edges.len() > max_edges {
+            self.edges.truncate(max_edges);
+            self.num_edges = max_edges;
+        }
+        self.max_ego_edges = Some(max_edges);
+        self
+    }
+
+    /// Set a weighted cap on ego-graph edges using a custom weight function.
+    ///
+    /// Computes weight for each edge, sorts by weight ascending (lower distance = higher priority),
+    /// keeps only the top `max_edges`, and updates `num_edges` and `edges`.
+    ///
+    /// This is useful for retaining the most significant edges when edges have an associated
+    /// metric (e.g., cosine distance between neighbors).
+    ///
+    /// # Default
+    /// `max_ego_edges` defaults to `None` (unlimited). Recommended: 500 edges.
+    ///
+    /// # Arguments
+    /// * `max_edges` - Maximum number of edges to retain
+    /// * `weight_fn` - Function computing edge weight: lower values = higher priority
+    ///
+    /// # Example
+    /// ```ignore
+    /// let ego = EgoGraph::build_pair(...)
+    ///     .cap_by_weight(500, |u, v| cosine_distance(u, v));
+    /// ```
+    pub fn cap_by_weight(mut self, max_edges: usize, weight_fn: impl Fn(NodeId, NodeId) -> f32) -> Self {
+        if self.edges.len() > max_edges {
+            // Compute weights and sort by weight ascending
+            let mut weighted_edges: Vec<_> = self
+                .edges
+                .iter()
+                .map(|&(u, v)| (weight_fn(u, v), u, v))
+                .collect();
+            weighted_edges.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
+            // Keep only top max_edges
+            self.edges = weighted_edges
+                .into_iter()
+                .take(max_edges)
+                .map(|(_, u, v)| (u, v))
+                .collect();
+            self.num_edges = self.edges.len();
+        }
+        self.max_ego_edges = Some(max_edges);
+        self
     }
 }
 

@@ -24,6 +24,7 @@ use palace_core::NodeId;
 /// * `base_vector` - The vector of the node for which we're selecting neighbors
 /// * `candidate_vectors` - Map of NodeId to their vectors
 /// * `max` - Maximum number of neighbors to select
+/// * `alpha` - Pruning parameter (default: 1.2). accept if dist(cand, base) <= alpha * dist(cand, selected)
 ///
 /// # Returns
 /// Vector of selected NodeIds
@@ -32,6 +33,7 @@ pub fn select_neighbors_heuristic(
     _base_vector: &[f32],
     candidate_vectors: &std::collections::HashMap<NodeId, Vec<f32>>,
     max: usize,
+    alpha: f32,
 ) -> Vec<NodeId> {
     if candidates.is_empty() {
         return Vec::new();
@@ -67,8 +69,10 @@ pub fn select_neighbors_heuristic(
         let mut is_diverse = true;
         for selected_vec in &selected_vectors {
             let dist_to_selected = cosine_distance(candidate_vec, selected_vec);
-            if dist_to_selected < *candidate_dist {
-                // This candidate is closer to an already-selected neighbor than to base
+            // Vamana alpha-pruning logic:
+            // accept if dist(candidate, base) <= alpha * dist(candidate, selected)
+            if *candidate_dist > alpha * dist_to_selected {
+                // This candidate is closer to an already-selected neighbor (scaled by alpha) than to base
                 is_diverse = false;
                 break;
             }
@@ -94,7 +98,7 @@ mod tests {
         let base_vec = vec![1.0, 0.0];
         let candidates = vec![];
         let vectors = HashMap::new();
-        let result = select_neighbors_heuristic(&candidates, &base_vec, &vectors, 5);
+        let result = select_neighbors_heuristic(&candidates, &base_vec, &vectors, 5, 1.2);
         assert!(result.is_empty());
     }
 
@@ -112,8 +116,8 @@ mod tests {
             (NodeId(1), 0.1f32),
             (NodeId(2), 1.0f32),
         ];
-
-        let result = select_neighbors_heuristic(&candidates, &base_vec, &vectors, 2);
+        let alpha = 1.0;
+        let result = select_neighbors_heuristic(&candidates, &base_vec, &vectors, 2, alpha);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0], NodeId(0)); // Always select closest
     }

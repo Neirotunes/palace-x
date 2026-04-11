@@ -55,6 +55,7 @@ pub struct NswIndex {
     hub_cache: RwLock<Vec<NodeId>>, // top-K hub nodes
     next_id: AtomicU64,
     dimensions: usize,
+    alpha: f32, // Pruning parameter for neighbor selection
 }
 
 impl NswIndex {
@@ -74,6 +75,27 @@ impl NswIndex {
             hub_cache: RwLock::new(Vec::new()),
             next_id: AtomicU64::new(0),
             dimensions,
+            alpha: 1.2, // Default alpha for Vamana-style pruning
+        }
+    }
+
+    /// Creates a new NSW index with custom alpha
+    pub fn with_alpha(
+        dimensions: usize,
+        max_neighbors: usize,
+        ef_construction: usize,
+        alpha: f32,
+    ) -> Self {
+        NswIndex {
+            nodes: DashMap::new(),
+            read_snapshot: ArcSwap::from_pointee(im::HashMap::new()),
+            max_neighbors,
+            ef_construction,
+            ef_search: AtomicUsize::new(64),
+            hub_cache: RwLock::new(Vec::new()),
+            next_id: AtomicU64::new(0),
+            dimensions,
+            alpha,
         }
     }
 
@@ -139,6 +161,7 @@ impl NswIndex {
             base_vector,
             &candidate_vectors,
             self.max_neighbors,
+            self.alpha,
         );
 
         // Reciprocal connections: update neighbors to include this node
@@ -171,6 +194,7 @@ impl NswIndex {
                         &neighbor_vector,
                         &neighbor_candidate_vectors,
                         self.max_neighbors,
+                        self.alpha,
                     );
 
                     // Re-acquire lock to assign

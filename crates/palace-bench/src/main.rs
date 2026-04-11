@@ -21,6 +21,9 @@ use palace_storage::MemoryPalace;
 use palace_topo::{betti, ego_graph::EgoGraph, metric};
 use rand::Rng;
 
+mod sift;
+mod sift_bench;
+
 // ─── Helpers ───────────────────────────────────────────────────────
 
 fn random_vector(rng: &mut impl Rng, dims: usize) -> Vec<f32> {
@@ -211,13 +214,13 @@ fn bench_topology(dims: usize, n_vectors: usize) {
     bench("EgoGraph::build_pair (2-hop)", 10_000, || {
         let _ = EgoGraph::build_pair(id_x, id_y, |id| {
             nsw.get_neighbors(id, 1).into_iter().collect()
-        });
+        }).with_cap(500);
     });
 
     // β₁ computation benchmark
     let ego = EgoGraph::build_pair(id_x, id_y, |id| {
         nsw.get_neighbors(id, 1).into_iter().collect()
-    });
+    }).with_cap(500);
 
     bench("beta_1(ego_graph)", 100_000, || {
         let _ = betti::beta_1(&ego);
@@ -259,6 +262,105 @@ fn bench_bitplane(dims: usize) {
         "  Compression ratios: full={:.2}x, 8-bit={:.2}x, coarse={:.2}x",
         ratio_full, ratio_8bit, ratio_coarse
     );
+}
+
+fn bench_sift(limit: Option<usize>) {
+    println!("\n═══ SIFT-128 Benchmark (Recall & QPS) ═══");
+    
+    // 1. Load data
+    let base_path = "data/siftsmall/siftsmall_base.fvecs";
+    let query_path = "data/siftsmall/siftsmall_query.fvecs";
+    let gt_path = "data/siftsmall/siftsmall_groundtruth.ivecs";
+
+    // Check if files exist
+    if !std::path::Path::new(base_path).exists() {
+        println!("  [!] SIFT data not found at data/siftsmall/. Skipping benchmark.");
+        println!("      Hint: Download from ftp://ftp.irisa.fr/local/texmex/corpus/siftsmall.tar.gz");
+        return;
+    }
+
+    let base_vectors = sift::load_fvecs(base_path).expect("Failed to load base vectors");
+    let query_vectors = sift::load_fvecs(query_path).expect("Failed to load query vectors");
+    let ground_truth = sift::load_ivecs(gt_path).expect("Failed to load ground truth");
+
+    let dims = 128;
+    let n_base = limit.unwrap_or(base_vectors.len());
+    let base_vectors = &base_vectors[..n_base];
+
+    println!("  Data: {} base vectors, {} queries", n_base, query_vectors.len());
+
+    // 2. Setup Index
+    let nsw_1bit = NswIndex::new(dims, 32, 200);
+    let nsw_4bit = NswIndex::with_alpha(dims, 32, 200, 1.2);
+
+    let rq_index = palace_quant::rabitq::RaBitQIndex::new(dims, 42);
+    let mut codes_1bit = Vec::new();
+    let mut codes_4bit = Vec::new();
+
+    println!("  Building indices...");
+    for (i, v) in base_vectors.iter().enumerate() {
+        nsw_1bit.insert(v.clone(), GraphMetaData { label: format!("{}", i) });
+        nsw_4bit.insert(v.clone(), GraphMetaData { label: format!("{}", i) });
+        codes_1bit.push(rq_index.encode_multibit(v, 1));
+        codes_4bit.push(rq_index.encode_multibit(v, 4));
+    }
+
+    // 3. Run benchmarks
+    println!("\n| Method | Recall@1 | Recall@10 | QPS | Memory/Vec |");
+    println!("|--------|----------|-----------|-----|------------|");
+
+    let mut run_bench = |name: &str, f: &dyn Fn(&[f32]) -> Vec<usize>, mem: &str| {
+        let start = Instant::now();
+        let mut recall_1 = 0.0;
+        let mut recall_10 = 0.0;
+
+        for (i, query_vec) in query_vectors.iter().enumerate() {
+            let results = f(query_vec);
+            let gt = &ground_truth[i];
+
+            if !results.is_empty() && results[0] == gt[0] as usize {
+                recall_1 += 1.0;
+            }
+
+            let hits = results.iter().take(10).filter(|&&id| gt[..10].contains(&(id as u32))).count();
+            recall_10 += hits as f32 / 10.0;
+        }
+
+        let elapsed = start.elapsed();
+        let qps = query_vectors.len() as f64 / elapsed.as_secs_f64();
+        
+        println!("| {} | {:.1}% | {:.1}% | {:.0} | {} |", 
+            name, 
+            (recall_1 / query_vectors.len() as f32) * 100.0,
+            (recall_10 / query_vectors.len() as f32) * 100.0,
+            qps,
+            mem
+        );
+    };
+
+    // Baseline: RaBitQ Brute Force (Asymmetric)
+    run_bench("RaBitQ 1-bit (BF)", &|q| {
+        let rq = rq_index.encode_query(q);
+        let res = palace_quant::rabitq::rabitq_topk(&rq_index, &rq, &codes_1bit, 10);
+        res.into_iter().map(|(id, _)| id).collect()
+    }, "D/8 + 16B");
+
+    run_bench("RaBitQ 4-bit (BF)", &|q| {
+        let rq = rq_index.encode_query(q);
+        let res = palace_quant::rabitq::rabitq_topk(&rq_index, &rq, &codes_4bit, 10);
+        res.into_iter().map(|(id, _)| id).collect()
+    }, "D/2 + 16B");
+
+    // NSW Search
+    run_bench("palace-x (1-bit + NSW)", &|q| {
+        let res = nsw_1bit.search(q, Some(64));
+        res.into_iter().map(|(id, _)| id.0 as usize).collect()
+    }, "Classic");
+
+    run_bench("palace-x (4-bit + NSW)", &|q| {
+        let res = nsw_4bit.search(q, Some(64));
+        res.into_iter().map(|(id, _)| id.0 as usize).collect()
+    }, "Vamana α=1.2");
 }
 
 fn bench_full_pipeline(dims: usize, n_vectors: usize) {
@@ -375,6 +477,7 @@ fn main() {
     bench_nsw_index(dims, 5_000);
     bench_topology(dims, 1_000);
     bench_bitplane(dims);
+    bench_sift(Some(1000)); // Use small subset for quick bench
     bench_full_pipeline(dims, 5_000);
 
     println!("\n═══ Large Scale (dims=1536, OpenAI ada-002) ═══");
@@ -386,6 +489,17 @@ fn main() {
 
     // ─── VERIFICATION SUITE ───
     bench_verify_claims(dims);
+
+    // ─── SIFT-10K BENCHMARK ───
+    let sift_data_dir = std::path::PathBuf::from("data");
+    if sift_data_dir.exists() || std::env::var("RUN_SIFT_BENCH").is_ok() {
+        sift_bench::run_sift_benchmark(&sift_data_dir);
+    } else {
+        println!("\n═══ SIFT-10K Benchmark: SKIPPED ═══");
+        println!("  To run: mkdir -p data && cargo run -p palace-bench --release");
+        println!("  Or: RUN_SIFT_BENCH=1 cargo run -p palace-bench --release");
+        println!("  Dataset will be auto-downloaded on first run.");
+    }
 
     println!("\n✓ All benchmarks complete.");
 }

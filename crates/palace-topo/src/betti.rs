@@ -203,6 +203,7 @@ mod tests {
                 edges: edges.into_iter().collect(),
                 num_vertices,
                 num_edges,
+                max_ego_edges: None,
             }
         }
     }
