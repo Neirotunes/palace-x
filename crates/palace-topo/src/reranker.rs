@@ -7,8 +7,8 @@
 //! **Parallelized via Rayon**: ego-graph construction and β₁ computation run in
 //! parallel across all candidates, giving ~Nx speedup on N cores.
 
-use crate::ego_graph::EgoGraph;
 use crate::ego_cache::EgoCache;
+use crate::ego_graph::EgoGraph;
 use crate::metric::d_total;
 use palace_core::NodeId;
 use rayon::prelude::*;
@@ -95,7 +95,12 @@ impl TopologicalReranker {
     ///
     /// Same as `rerank()` but uses the provided `EgoCache` to avoid
     /// redundant ego-graph construction for recently-seen nodes.
-    pub fn rerank_cached<F>(&self, candidates: &[Fragment], neighbors_fn: F, cache: &EgoCache) -> Vec<Fragment>
+    pub fn rerank_cached<F>(
+        &self,
+        candidates: &[Fragment],
+        neighbors_fn: F,
+        cache: &EgoCache,
+    ) -> Vec<Fragment>
     where
         F: Fn(NodeId) -> Vec<NodeId> + Sync,
     {
@@ -109,7 +114,8 @@ impl TopologicalReranker {
                 let ego = match cache.get(candidate.node_id) {
                     Some(cached) => cached,
                     None => {
-                        let built = EgoGraph::build_single(candidate.node_id, 1, |node| neighbors_fn(node));
+                        let built =
+                            EgoGraph::build_single(candidate.node_id, 1, |node| neighbors_fn(node));
                         cache.put(candidate.node_id, built.clone());
                         built
                     }
@@ -164,17 +170,16 @@ impl TopologicalReranker {
 
                 for other in candidates {
                     if candidate.node_id != other.node_id {
-                        let ego = EgoGraph::build_pair(
-                            candidate.node_id,
-                            other.node_id,
-                            |node| neighbors_fn(node),
-                        );
+                        let ego = EgoGraph::build_pair(candidate.node_id, other.node_id, |node| {
+                            neighbors_fn(node)
+                        });
                         let distance = d_total(candidate.cosine_dist, &ego, self.alpha, self.beta);
                         total_distance += distance;
                     }
                 }
 
-                let avg_distance = total_distance / (candidates.len().saturating_sub(1).max(1) as f32);
+                let avg_distance =
+                    total_distance / (candidates.len().saturating_sub(1).max(1) as f32);
                 (candidate.clone(), avg_distance)
             })
             .collect();
@@ -201,8 +206,8 @@ mod tests {
         }
 
         fn add_edge(&mut self, u: NodeId, v: NodeId) {
-            self.adjacency.entry(u).or_insert_with(Vec::new).push(v);
-            self.adjacency.entry(v).or_insert_with(Vec::new).push(u);
+            self.adjacency.entry(u).or_default().push(v);
+            self.adjacency.entry(v).or_default().push(u);
         }
 
         fn neighbors(&self, node: NodeId) -> Vec<NodeId> {
@@ -238,9 +243,21 @@ mod tests {
 
         let reranker = TopologicalReranker::new(0.5, 0.5);
         let candidates = vec![
-            Fragment { node_id: NodeId(3), cosine_dist: 0.4, metadata: None },
-            Fragment { node_id: NodeId(0), cosine_dist: 0.5, metadata: None },
-            Fragment { node_id: NodeId(1), cosine_dist: 0.5, metadata: None },
+            Fragment {
+                node_id: NodeId(3),
+                cosine_dist: 0.4,
+                metadata: None,
+            },
+            Fragment {
+                node_id: NodeId(0),
+                cosine_dist: 0.5,
+                metadata: None,
+            },
+            Fragment {
+                node_id: NodeId(1),
+                cosine_dist: 0.5,
+                metadata: None,
+            },
         ];
 
         let result = reranker.rerank(&candidates, |node| graph.neighbors(node));
@@ -252,9 +269,21 @@ mod tests {
         let graph = TestGraph::new();
         let reranker = TopologicalReranker::new(0.5, 0.5);
         let candidates = vec![
-            Fragment { node_id: NodeId(0), cosine_dist: 0.3, metadata: None },
-            Fragment { node_id: NodeId(1), cosine_dist: 0.4, metadata: None },
-            Fragment { node_id: NodeId(2), cosine_dist: 0.5, metadata: None },
+            Fragment {
+                node_id: NodeId(0),
+                cosine_dist: 0.3,
+                metadata: None,
+            },
+            Fragment {
+                node_id: NodeId(1),
+                cosine_dist: 0.4,
+                metadata: None,
+            },
+            Fragment {
+                node_id: NodeId(2),
+                cosine_dist: 0.5,
+                metadata: None,
+            },
         ];
 
         let result = reranker.rerank(&candidates, |node| graph.neighbors(node));
@@ -302,8 +331,16 @@ mod tests {
         let reranker = TopologicalReranker::new(0.5, 0.5);
         let cache = EgoCache::new(100);
         let candidates = vec![
-            Fragment { node_id: NodeId(0), cosine_dist: 0.5, metadata: None },
-            Fragment { node_id: NodeId(1), cosine_dist: 0.3, metadata: None },
+            Fragment {
+                node_id: NodeId(0),
+                cosine_dist: 0.5,
+                metadata: None,
+            },
+            Fragment {
+                node_id: NodeId(1),
+                cosine_dist: 0.3,
+                metadata: None,
+            },
         ];
 
         // First pass — cache miss
@@ -326,8 +363,16 @@ mod tests {
 
         let reranker = TopologicalReranker::new(0.5, 0.5);
         let candidates = vec![
-            Fragment { node_id: NodeId(0), cosine_dist: 0.3, metadata: None },
-            Fragment { node_id: NodeId(1), cosine_dist: 0.4, metadata: None },
+            Fragment {
+                node_id: NodeId(0),
+                cosine_dist: 0.3,
+                metadata: None,
+            },
+            Fragment {
+                node_id: NodeId(1),
+                cosine_dist: 0.4,
+                metadata: None,
+            },
         ];
 
         let result = reranker.rerank_pairwise(&candidates, |node| graph.neighbors(node));
@@ -358,12 +403,21 @@ mod tests {
         let reranker_structural = TopologicalReranker::new(0.0, 1.0);
 
         let candidates = vec![
-            Fragment { node_id: NodeId(0), cosine_dist: 0.2, metadata: None },
-            Fragment { node_id: NodeId(1), cosine_dist: 0.8, metadata: None },
+            Fragment {
+                node_id: NodeId(0),
+                cosine_dist: 0.2,
+                metadata: None,
+            },
+            Fragment {
+                node_id: NodeId(1),
+                cosine_dist: 0.8,
+                metadata: None,
+            },
         ];
 
         let result_cosine = reranker_cosine.rerank(&candidates, |node| graph.neighbors(node));
-        let result_structural = reranker_structural.rerank(&candidates, |node| graph.neighbors(node));
+        let result_structural =
+            reranker_structural.rerank(&candidates, |node| graph.neighbors(node));
 
         assert_eq!(result_cosine.len(), 2);
         assert_eq!(result_structural.len(), 2);

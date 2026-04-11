@@ -3,14 +3,14 @@
 //! Integrates NSW index, topological reranking, and bit-plane storage into a complete
 //! two-stage retrieval system for hierarchical memory in autonomous agents.
 
-use palace_core::{MemoryError, MemoryProvider, NodeId, MetaData, Fragment, SearchConfig};
-use palace_graph::{NswIndex, MetaData as GraphMetaData};
-use palace_topo::TopologicalReranker;
-use palace_topo::ego_cache::EgoCache;
 use palace_bitplane::BitPlaneStore;
+use palace_core::{Fragment, MemoryError, MemoryProvider, MetaData, NodeId, SearchConfig};
+use palace_graph::{MetaData as GraphMetaData, NswIndex};
+use palace_topo::ego_cache::EgoCache;
+use palace_topo::TopologicalReranker;
 use parking_lot::RwLock;
-use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 /// Palace-X in-memory implementation combining NSW, topological reranking, and bit-plane storage.
 ///
@@ -79,7 +79,6 @@ impl MemoryPalace {
     pub fn cache_hit_rate(&self) -> f64 {
         self.ego_cache.hit_rate()
     }
-
 }
 
 impl MemoryProvider for MemoryPalace {
@@ -118,8 +117,9 @@ impl MemoryProvider for MemoryPalace {
         // Insert into BitPlaneStore for precision-proportional storage
         {
             let mut bp = self.bitplane.write();
-            bp.insert(id_u64, &vector)
-                .map_err(|e| MemoryError::StorageError(format!("BitPlane insertion failed: {}", e)))?;
+            bp.insert(id_u64, &vector).map_err(|e| {
+                MemoryError::StorageError(format!("BitPlane insertion failed: {}", e))
+            })?;
         }
 
         // Store original vector for reranking
@@ -167,7 +167,8 @@ impl MemoryProvider for MemoryPalace {
         config: &SearchConfig,
     ) -> Result<Vec<Fragment>, MemoryError> {
         // Validate configuration
-        config.validate()
+        config
+            .validate()
             .map_err(|e| MemoryError::StorageError(e))?;
 
         // Validate query dimensions
@@ -192,7 +193,7 @@ impl MemoryProvider for MemoryPalace {
         let mut fragments: Vec<Fragment> = candidates
             .iter()
             .take(config.rerank_k)
-            .filter_map(|(nsw_id, nsw_cosine_dist)| {
+            .filter_map(|(nsw_id, _nsw_cosine_dist)| {
                 let node_id = *nsw_id;
 
                 // Retrieve full vector and metadata for refinement stages
@@ -218,7 +219,8 @@ impl MemoryProvider for MemoryPalace {
         } else {
             // No reranking: just sort by cosine score and trim to limit
             fragments.sort_by(|a, b| {
-                b.score.partial_cmp(&a.score)
+                b.score
+                    .partial_cmp(&a.score)
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
         }
@@ -286,7 +288,7 @@ impl MemoryPalace {
     fn rerank_stage_2(
         &self,
         fragments: Vec<Fragment>,
-        config: &SearchConfig,
+        _config: &SearchConfig,
     ) -> Result<Vec<Fragment>, MemoryError> {
         use palace_topo::reranker::Fragment as TopoFragment;
 
@@ -309,13 +311,14 @@ impl MemoryPalace {
         };
 
         // Apply topological reranking (parallelized + cached)
-        let reranked = self.reranker.rerank_cached(&candidates, neighbors_closure, &self.ego_cache);
+        let reranked = self
+            .reranker
+            .rerank_cached(&candidates, neighbors_closure, &self.ego_cache);
 
         // Convert back to Fragment format with new scores
         let mut result: Vec<Fragment> = reranked
             .iter()
-            .enumerate()
-            .map(|(rank, topo_frag)| {
+            .map(|topo_frag| {
                 // Find original fragment to get metadata
                 fragments
                     .iter()
@@ -336,7 +339,8 @@ impl MemoryPalace {
             .collect();
 
         result.sort_by(|a, b| {
-            b.score.partial_cmp(&a.score)
+            b.score
+                .partial_cmp(&a.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
@@ -465,7 +469,8 @@ mod tests {
     #[tokio::test]
     async fn test_query_dimension_mismatch() {
         let palace = MemoryPalace::new(128);
-        palace.ingest(vec![0.5; 128], MetaData::new(1000, "test"))
+        palace
+            .ingest(vec![0.5; 128], MetaData::new(1000, "test"))
             .await
             .unwrap();
 
@@ -481,10 +486,12 @@ mod tests {
         let palace = MemoryPalace::new(128);
 
         // Ingest vectors
-        let id1 = palace.ingest(vec![1.0; 128], MetaData::new(1000, "s1"))
+        let id1 = palace
+            .ingest(vec![1.0; 128], MetaData::new(1000, "s1"))
             .await
             .unwrap();
-        let id2 = palace.ingest(vec![0.9; 128], MetaData::new(1001, "s2"))
+        let _id2 = palace
+            .ingest(vec![0.9; 128], MetaData::new(1001, "s2"))
             .await
             .unwrap();
 
@@ -499,7 +506,8 @@ mod tests {
     #[tokio::test]
     async fn test_vacuum_nonexistent_node() {
         let palace = MemoryPalace::new(128);
-        palace.ingest(vec![1.0; 128], MetaData::new(1000, "s1"))
+        palace
+            .ingest(vec![1.0; 128], MetaData::new(1000, "s1"))
             .await
             .unwrap();
 
@@ -528,13 +536,16 @@ mod tests {
     async fn test_multiple_ingests_generates_unique_ids() {
         let palace = MemoryPalace::new(128);
 
-        let id1 = palace.ingest(vec![1.0; 128], MetaData::new(1000, "s1"))
+        let id1 = palace
+            .ingest(vec![1.0; 128], MetaData::new(1000, "s1"))
             .await
             .unwrap();
-        let id2 = palace.ingest(vec![0.9; 128], MetaData::new(1001, "s2"))
+        let id2 = palace
+            .ingest(vec![0.9; 128], MetaData::new(1001, "s2"))
             .await
             .unwrap();
-        let id3 = palace.ingest(vec![0.8; 128], MetaData::new(1002, "s3"))
+        let id3 = palace
+            .ingest(vec![0.8; 128], MetaData::new(1002, "s3"))
             .await
             .unwrap();
 

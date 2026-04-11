@@ -209,15 +209,12 @@ mod tests {
         }
 
         fn add_edge(&mut self, u: NodeId, v: NodeId) {
-            self.adjacency.entry(u).or_insert_with(Vec::new).push(v);
-            self.adjacency.entry(v).or_insert_with(Vec::new).push(u);
+            self.adjacency.entry(u).or_default().push(v);
+            self.adjacency.entry(v).or_default().push(u);
         }
 
         fn neighbors(&self, node: NodeId) -> Vec<NodeId> {
-            self.adjacency
-                .get(&node)
-                .cloned()
-                .unwrap_or_default()
+            self.adjacency.get(&node).cloned().unwrap_or_default()
         }
     }
 

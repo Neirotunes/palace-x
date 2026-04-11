@@ -156,6 +156,6 @@ mod tests {
         let b = vec![0.3, 0.4, -0.5, 0.9, -0.2];
         let dist = cosine_distance(&a, &b);
         // Distance should be in [0, 2]
-        assert!(dist >= 0.0 && dist <= 2.0);
+        assert!((0.0..=2.0).contains(&dist));
     }
 }

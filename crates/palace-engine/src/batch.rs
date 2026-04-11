@@ -48,7 +48,10 @@ impl PalaceEngine {
 
     /// Extract successful node IDs from batch results
     pub fn batch_success_ids(results: &[Result<NodeId, MemoryError>]) -> Vec<NodeId> {
-        results.iter().filter_map(|r| r.as_ref().ok().copied()).collect()
+        results
+            .iter()
+            .filter_map(|r| r.as_ref().ok().copied())
+            .collect()
     }
 }
 
@@ -62,9 +65,18 @@ mod tests {
         let engine = PalaceEngine::start(8);
 
         let items = vec![
-            (vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8], MetaData::new(1, "batch1")),
-            (vec![0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9], MetaData::new(2, "batch2")),
-            (vec![0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0], MetaData::new(3, "batch3")),
+            (
+                vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8],
+                MetaData::new(1, "batch1"),
+            ),
+            (
+                vec![0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+                MetaData::new(2, "batch2"),
+            ),
+            (
+                vec![0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+                MetaData::new(3, "batch3"),
+            ),
         ];
 
         let results = engine.ingest_batch(items).await;

@@ -7,14 +7,14 @@
 //! - Palace-X d_total distance metric combining cosine similarity with structural connectivity
 //! - Topological reranking for Stage 2 candidate refinement
 
-pub mod ego_graph;
-pub mod ego_cache;
 pub mod betti;
+pub mod ego_cache;
+pub mod ego_graph;
 pub mod metric;
 pub mod reranker;
 
-pub use ego_graph::EgoGraph;
 pub use betti::{beta_0, beta_1, euler_characteristic};
+pub use ego_graph::EgoGraph;
 pub use metric::d_total;
 pub use reranker::TopologicalReranker;
 

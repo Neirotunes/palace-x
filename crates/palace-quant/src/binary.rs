@@ -64,7 +64,9 @@ mod tests {
     #[test]
     fn test_quantize_alternating() {
         // Alternating positive/negative
-        let v: Vec<f32> = (0..64).map(|i| if i % 2 == 0 { 1.0 } else { -1.0 }).collect();
+        let v: Vec<f32> = (0..64)
+            .map(|i| if i % 2 == 0 { 1.0 } else { -1.0 })
+            .collect();
         let result = quantize_binary(&v);
         assert_eq!(result.len(), 1);
         // Even indices (0,2,4,...) are set: 0xAAAA...

@@ -104,7 +104,11 @@ mod tests {
         vectors.insert(NodeId(1), vec![0.9, 0.1]); // close to base
         vectors.insert(NodeId(2), vec![0.0, 1.0]); // orthogonal to base
 
-        let candidates = vec![(NodeId(0), 0.0f32), (NodeId(1), 0.1f32), (NodeId(2), 1.0f32)];
+        let candidates = vec![
+            (NodeId(0), 0.0f32),
+            (NodeId(1), 0.1f32),
+            (NodeId(2), 1.0f32),
+        ];
 
         let result = select_neighbors_heuristic(&candidates, &base_vec, &vectors, 2);
         assert_eq!(result.len(), 2);

@@ -10,12 +10,12 @@
 
 use std::time::Instant;
 
-use palace_core::{MetaData, NodeId, SearchConfig, MemoryProvider};
-use palace_quant::{binary, hamming, cosine, batch};
-use palace_graph::{NswIndex, MetaData as GraphMetaData};
-use palace_topo::{ego_graph::EgoGraph, betti, metric};
 use palace_bitplane::planes::BitPlaneVector;
+use palace_core::{MemoryProvider, MetaData, NodeId, SearchConfig};
+use palace_graph::{MetaData as GraphMetaData, NswIndex};
+use palace_quant::{batch, binary, cosine, hamming};
 use palace_storage::MemoryPalace;
+use palace_topo::{betti, ego_graph::EgoGraph, metric};
 use rand::Rng;
 
 // ─── Helpers ───────────────────────────────────────────────────────
@@ -35,10 +35,14 @@ fn random_metadata(rng: &mut impl Rng, prefix: &str) -> MetaData {
 
 fn bench<F: FnMut()>(name: &str, iterations: usize, mut f: F) {
     // Warm-up
-    for _ in 0..3 { f(); }
+    for _ in 0..3 {
+        f();
+    }
 
     let start = Instant::now();
-    for _ in 0..iterations { f(); }
+    for _ in 0..iterations {
+        f();
+    }
     let elapsed = start.elapsed();
 
     let per_op = elapsed / iterations as u32;
@@ -90,7 +94,10 @@ fn bench_cosine(dims: usize) {
 }
 
 fn bench_batch_hamming(dims: usize, n_candidates: usize) {
-    println!("\n═══ Batch Hamming Top-K (dims={}, candidates={}) ═══", dims, n_candidates);
+    println!(
+        "\n═══ Batch Hamming Top-K (dims={}, candidates={}) ═══",
+        dims, n_candidates
+    );
     let mut rng = rand::thread_rng();
     let query = binary::quantize_binary(&random_vector(&mut rng, dims));
     let candidates: Vec<Vec<u64>> = (0..n_candidates)
@@ -98,13 +105,21 @@ fn bench_batch_hamming(dims: usize, n_candidates: usize) {
         .collect();
     let refs: Vec<&[u64]> = candidates.iter().map(|c| c.as_slice()).collect();
 
-    bench(&format!("batch_hamming_topk (k=10, n={})", n_candidates), 10_000, || {
-        let _ = batch::batch_hamming_topk(&query, &refs, 10);
-    });
+    bench(
+        &format!("batch_hamming_topk (k=10, n={})", n_candidates),
+        10_000,
+        || {
+            let _ = batch::batch_hamming_topk(&query, &refs, 10);
+        },
+    );
 
-    bench(&format!("batch_hamming_topk (k=50, n={})", n_candidates), 10_000, || {
-        let _ = batch::batch_hamming_topk(&query, &refs, 50);
-    });
+    bench(
+        &format!("batch_hamming_topk (k=50, n={})", n_candidates),
+        10_000,
+        || {
+            let _ = batch::batch_hamming_topk(&query, &refs, 50);
+        },
+    );
 }
 
 fn bench_nsw_index(dims: usize, n_vectors: usize) {
@@ -114,12 +129,22 @@ fn bench_nsw_index(dims: usize, n_vectors: usize) {
     // Insertion benchmark
     let nsw = NswIndex::new(dims, 32, 200);
     let vectors: Vec<(Vec<f32>, MetaData)> = (0..n_vectors)
-        .map(|_| (random_vector(&mut rng, dims), random_metadata(&mut rng, "bench")))
+        .map(|_| {
+            (
+                random_vector(&mut rng, dims),
+                random_metadata(&mut rng, "bench"),
+            )
+        })
         .collect();
 
     let start = Instant::now();
     for (i, (vec, _meta)) in vectors.iter().enumerate() {
-        nsw.insert(vec.clone(), GraphMetaData { label: format!("bench-{}", i) });
+        nsw.insert(
+            vec.clone(),
+            GraphMetaData {
+                label: format!("bench-{}", i),
+            },
+        );
     }
     let elapsed = start.elapsed();
     println!(
@@ -159,13 +184,21 @@ fn bench_nsw_index(dims: usize, n_vectors: usize) {
 }
 
 fn bench_topology(dims: usize, n_vectors: usize) {
-    println!("\n═══ Topological Reranking (dims={}, n={}) ═══", dims, n_vectors);
+    println!(
+        "\n═══ Topological Reranking (dims={}, n={}) ═══",
+        dims, n_vectors
+    );
     let mut rng = rand::thread_rng();
 
     // Build NSW index first
     let nsw = NswIndex::new(dims, 32, 200);
     for i in 0..n_vectors {
-        nsw.insert(random_vector(&mut rng, dims), GraphMetaData { label: format!("topo-{}", i) });
+        nsw.insert(
+            random_vector(&mut rng, dims),
+            GraphMetaData {
+                label: format!("topo-{}", i),
+            },
+        );
     }
 
     // Build ego-graph benchmark
@@ -219,12 +252,17 @@ fn bench_bitplane(dims: usize) {
     let ratio_full = bp.compression_ratio(23);
     let ratio_coarse = bp.compression_ratio(0);
     let ratio_8bit = bp.compression_ratio(8);
-    println!("  Compression ratios: full={:.2}x, 8-bit={:.2}x, coarse={:.2}x",
-        ratio_full, ratio_8bit, ratio_coarse);
+    println!(
+        "  Compression ratios: full={:.2}x, 8-bit={:.2}x, coarse={:.2}x",
+        ratio_full, ratio_8bit, ratio_coarse
+    );
 }
 
 fn bench_full_pipeline(dims: usize, n_vectors: usize) {
-    println!("\n═══ Full Pipeline: MemoryPalace (dims={}, n={}) ═══", dims, n_vectors);
+    println!(
+        "\n═══ Full Pipeline: MemoryPalace (dims={}, n={}) ═══",
+        dims, n_vectors
+    );
     let mut rng = rand::thread_rng();
 
     let palace = MemoryPalace::new(dims);
@@ -232,7 +270,12 @@ fn bench_full_pipeline(dims: usize, n_vectors: usize) {
 
     // Ingest benchmark
     let vectors: Vec<(Vec<f32>, MetaData)> = (0..n_vectors)
-        .map(|_| (random_vector(&mut rng, dims), random_metadata(&mut rng, "pipe")))
+        .map(|_| {
+            (
+                random_vector(&mut rng, dims),
+                random_metadata(&mut rng, "pipe"),
+            )
+        })
         .collect();
 
     let start = Instant::now();
@@ -304,7 +347,10 @@ fn bench_full_pipeline(dims: usize, n_vectors: usize) {
     println!("\n  Palace Stats:");
     println!("    Nodes:     {}", stats.total_nodes);
     println!("    Dims:      {}", stats.dimensions);
-    println!("    Memory:    {:.2} MB", stats.memory_usage_bytes as f64 / 1_048_576.0);
+    println!(
+        "    Memory:    {:.2} MB",
+        stats.memory_usage_bytes as f64 / 1_048_576.0
+    );
     println!("    Avg Hub:   {:.4}", stats.avg_hub_score);
     println!("    Max Hub:   {:.4}", stats.max_hub_score);
 }
@@ -402,20 +448,44 @@ fn verify_claim_1_memory_footprint(dims: usize, n: usize) {
     let reduction_nsw_vs_hnsw = (1.0 - nsw_only_mb / hnsw_mb) * 100.0;
 
     println!("  ┌─────────────────────────────────────────────────┐");
-    println!("  │ Configuration: dims={}, n={}, M={}          │", dims, n, m);
+    println!(
+        "  │ Configuration: dims={}, n={}, M={}          │",
+        dims, n, m
+    );
     println!("  ├─────────────────────────────────────────────────┤");
-    println!("  │ Theoretical HNSW (hnswlib):   {:>8.2} MB       │", hnsw_mb);
-    println!("  │ Palace-X NSW-only estimate:    {:>8.2} MB       │", nsw_only_mb);
-    println!("  │ Palace-X total (measured):     {:>8.2} MB       │", palace_mb);
+    println!(
+        "  │ Theoretical HNSW (hnswlib):   {:>8.2} MB       │",
+        hnsw_mb
+    );
+    println!(
+        "  │ Palace-X NSW-only estimate:    {:>8.2} MB       │",
+        nsw_only_mb
+    );
+    println!(
+        "  │ Palace-X total (measured):     {:>8.2} MB       │",
+        palace_mb
+    );
     println!("  ├─────────────────────────────────────────────────┤");
-    println!("  │ NSW vs HNSW reduction:         {:>+7.1}%         │", reduction_nsw_vs_hnsw);
-    println!("  │ Total Palace vs HNSW:          {:>+7.1}%         │", reduction_vs_hnsw);
+    println!(
+        "  │ NSW vs HNSW reduction:         {:>+7.1}%         │",
+        reduction_nsw_vs_hnsw
+    );
+    println!(
+        "  │ Total Palace vs HNSW:          {:>+7.1}%         │",
+        reduction_vs_hnsw
+    );
     println!("  └─────────────────────────────────────────────────┘");
 
     if reduction_vs_hnsw.abs() > 30.0 {
-        println!("  ✓ CLAIM PLAUSIBLE: {:.1}% reduction measured", reduction_vs_hnsw.abs());
+        println!(
+            "  ✓ CLAIM PLAUSIBLE: {:.1}% reduction measured",
+            reduction_vs_hnsw.abs()
+        );
     } else {
-        println!("  ✗ CLAIM NOT VERIFIED: only {:.1}% reduction measured", reduction_vs_hnsw.abs());
+        println!(
+            "  ✗ CLAIM NOT VERIFIED: only {:.1}% reduction measured",
+            reduction_vs_hnsw.abs()
+        );
     }
 }
 
@@ -454,16 +524,40 @@ fn verify_claim_2_bandwidth_savings(dims: usize) {
     let ratio_full = bp.compression_ratio(23);
 
     println!("  ┌──────────────────────────────────────────────────────────┐");
-    println!("  │ Vector: dims={}, f32 = {} bytes                     │", dims, full_f32_bytes);
+    println!(
+        "  │ Vector: dims={}, f32 = {} bytes                     │",
+        dims, full_f32_bytes
+    );
     println!("  ├──────────────────────────────────────────────────────────┤");
-    println!("  │ Full f32:                {} B  (baseline)               │", full_f32_bytes);
-    println!("  │ Full bit-plane (32 pln): {} B  (ratio: {:.2}x)          │", full_bp_bytes, ratio_full);
-    println!("  │ Partial (17 planes):     {} B  (ratio: {:.2}x)          │", partial_8_bytes, ratio_8bit);
-    println!("  │ Coarse (9 planes):       {} B  (ratio: {:.2}x)          │", coarse_bytes, ratio_coarse);
+    println!(
+        "  │ Full f32:                {} B  (baseline)               │",
+        full_f32_bytes
+    );
+    println!(
+        "  │ Full bit-plane (32 pln): {} B  (ratio: {:.2}x)          │",
+        full_bp_bytes, ratio_full
+    );
+    println!(
+        "  │ Partial (17 planes):     {} B  (ratio: {:.2}x)          │",
+        partial_8_bytes, ratio_8bit
+    );
+    println!(
+        "  │ Coarse (9 planes):       {} B  (ratio: {:.2}x)          │",
+        coarse_bytes, ratio_coarse
+    );
     println!("  ├──────────────────────────────────────────────────────────┤");
-    println!("  │ Coarse vs f32 savings:       {:.1}%                      │", savings_coarse_vs_f32);
-    println!("  │ Coarse vs full-BP savings:   {:.1}%                      │", savings_coarse_vs_full_bp);
-    println!("  │ Partial(8) vs f32 savings:   {:.1}%                      │", savings_partial_vs_f32);
+    println!(
+        "  │ Coarse vs f32 savings:       {:.1}%                      │",
+        savings_coarse_vs_f32
+    );
+    println!(
+        "  │ Coarse vs full-BP savings:   {:.1}%                      │",
+        savings_coarse_vs_full_bp
+    );
+    println!(
+        "  │ Partial(8) vs f32 savings:   {:.1}%                      │",
+        savings_partial_vs_f32
+    );
     println!("  └──────────────────────────────────────────────────────────┘");
 
     // Latency comparison
@@ -478,10 +572,15 @@ fn verify_claim_2_bandwidth_savings(dims: usize) {
     });
 
     println!("\n  VERDICT on '46.9%' claim:");
-    println!("  - Coarse-only saves {:.1}% bandwidth vs f32 (BETTER than claimed)", savings_coarse_vs_f32);
+    println!(
+        "  - Coarse-only saves {:.1}% bandwidth vs f32 (BETTER than claimed)",
+        savings_coarse_vs_f32
+    );
     println!("  - The '46.9%' likely referred to a partial-precision fetch scenario");
-    println!("  - Verified savings range: {:.1}%–{:.1}% depending on precision level",
-        savings_partial_vs_f32, savings_coarse_vs_f32);
+    println!(
+        "  - Verified savings range: {:.1}%–{:.1}% depending on precision level",
+        savings_partial_vs_f32, savings_coarse_vs_f32
+    );
 }
 
 /// CLAIM 3: "5x more efficient than Python" (memory efficiency)
@@ -513,8 +612,8 @@ fn verify_claim_3_python_comparison(dims: usize, n: usize) {
     // hnswlib: ~2-3KB per vector (384d, M=32)
     // FAISS: ~1.6-2.5KB per vector (384d, IVF + HNSW)
     let chromadb_bytes_per_vec = 5000.0; // ~5KB typical
-    let hnswlib_bytes_per_vec = 2500.0;  // ~2.5KB typical
-    let faiss_bytes_per_vec = 2000.0;    // ~2KB typical
+    let hnswlib_bytes_per_vec = 2500.0; // ~2.5KB typical
+    let faiss_bytes_per_vec = 2000.0; // ~2KB typical
 
     let ratio_vs_chromadb = chromadb_bytes_per_vec / palace_bytes_per_vec;
     let ratio_vs_hnswlib = hnswlib_bytes_per_vec / palace_bytes_per_vec;
@@ -529,47 +628,107 @@ fn verify_claim_3_python_comparison(dims: usize, n: usize) {
     let haiku_rerank_us = 2_000_000.0; // ~2s for LLM rerank
 
     println!("  ┌──────────────────────────────────────────────────────────┐");
-    println!("  │ MEMORY EFFICIENCY (dims={}, n={})                    │", dims, n);
+    println!(
+        "  │ MEMORY EFFICIENCY (dims={}, n={})                    │",
+        dims, n
+    );
     println!("  ├──────────────────────────────────────────────────────────┤");
-    println!("  │ Palace-X:     {:>7.0} B/vec  ({:.2} MB total)          │", palace_bytes_per_vec, palace_mb);
-    println!("  │ ChromaDB*:    {:>7.0} B/vec  (~{:.0} MB estimated)       │", chromadb_bytes_per_vec, chromadb_bytes_per_vec * n as f64 / 1_048_576.0);
-    println!("  │ hnswlib*:     {:>7.0} B/vec  (~{:.0} MB estimated)       │", hnswlib_bytes_per_vec, hnswlib_bytes_per_vec * n as f64 / 1_048_576.0);
-    println!("  │ FAISS*:       {:>7.0} B/vec  (~{:.0} MB estimated)       │", faiss_bytes_per_vec, faiss_bytes_per_vec * n as f64 / 1_048_576.0);
+    println!(
+        "  │ Palace-X:     {:>7.0} B/vec  ({:.2} MB total)          │",
+        palace_bytes_per_vec, palace_mb
+    );
+    println!(
+        "  │ ChromaDB*:    {:>7.0} B/vec  (~{:.0} MB estimated)       │",
+        chromadb_bytes_per_vec,
+        chromadb_bytes_per_vec * n as f64 / 1_048_576.0
+    );
+    println!(
+        "  │ hnswlib*:     {:>7.0} B/vec  (~{:.0} MB estimated)       │",
+        hnswlib_bytes_per_vec,
+        hnswlib_bytes_per_vec * n as f64 / 1_048_576.0
+    );
+    println!(
+        "  │ FAISS*:       {:>7.0} B/vec  (~{:.0} MB estimated)       │",
+        faiss_bytes_per_vec,
+        faiss_bytes_per_vec * n as f64 / 1_048_576.0
+    );
     println!("  ├──────────────────────────────────────────────────────────┤");
-    println!("  │ Ratio vs ChromaDB:  {:.1}x more efficient               │", ratio_vs_chromadb);
-    println!("  │ Ratio vs hnswlib:   {:.1}x more efficient               │", ratio_vs_hnswlib);
-    println!("  │ Ratio vs FAISS:     {:.1}x more efficient               │", ratio_vs_faiss);
+    println!(
+        "  │ Ratio vs ChromaDB:  {:.1}x more efficient               │",
+        ratio_vs_chromadb
+    );
+    println!(
+        "  │ Ratio vs hnswlib:   {:.1}x more efficient               │",
+        ratio_vs_hnswlib
+    );
+    println!(
+        "  │ Ratio vs FAISS:     {:.1}x more efficient               │",
+        ratio_vs_faiss
+    );
     println!("  ├──────────────────────────────────────────────────────────┤");
     println!("  │ LATENCY COMPARISON                                      │");
     println!("  ├──────────────────────────────────────────────────────────┤");
-    println!("  │ Palace-X raw:       {:>8.0} μs                          │", palace_raw_us);
-    println!("  │ Palace-X rerank:    {:>8.0} μs                          │", palace_rerank_us);
-    println!("  │ ChromaDB*:          {:>8.0} μs                          │", chromadb_us);
-    println!("  │ Haiku rerank*:      {:>8.0} μs                          │", haiku_rerank_us);
+    println!(
+        "  │ Palace-X raw:       {:>8.0} μs                          │",
+        palace_raw_us
+    );
+    println!(
+        "  │ Palace-X rerank:    {:>8.0} μs                          │",
+        palace_rerank_us
+    );
+    println!(
+        "  │ ChromaDB*:          {:>8.0} μs                          │",
+        chromadb_us
+    );
+    println!(
+        "  │ Haiku rerank*:      {:>8.0} μs                          │",
+        haiku_rerank_us
+    );
     println!("  ├──────────────────────────────────────────────────────────┤");
-    println!("  │ Speedup vs ChromaDB (raw):   {:>6.0}x                    │", chromadb_us / palace_raw_us);
-    println!("  │ Speedup vs Haiku rerank:     {:>6.0}x                    │", haiku_rerank_us / palace_rerank_us);
+    println!(
+        "  │ Speedup vs ChromaDB (raw):   {:>6.0}x                    │",
+        chromadb_us / palace_raw_us
+    );
+    println!(
+        "  │ Speedup vs Haiku rerank:     {:>6.0}x                    │",
+        haiku_rerank_us / palace_rerank_us
+    );
     println!("  └──────────────────────────────────────────────────────────┘");
     println!("  * Python baselines from published benchmarks (ann-benchmarks, ChromaDB docs)");
 
     println!("\n  VERDICT on '5x' claim:");
     if ratio_vs_chromadb >= 4.5 {
-        println!("  ✓ vs ChromaDB: {:.1}x — VERIFIED (≥5x with full stack overhead)", ratio_vs_chromadb);
+        println!(
+            "  ✓ vs ChromaDB: {:.1}x — VERIFIED (≥5x with full stack overhead)",
+            ratio_vs_chromadb
+        );
     } else if ratio_vs_chromadb >= 2.0 {
-        println!("  ~ vs ChromaDB: {:.1}x — PARTIALLY VERIFIED (2-5x range)", ratio_vs_chromadb);
+        println!(
+            "  ~ vs ChromaDB: {:.1}x — PARTIALLY VERIFIED (2-5x range)",
+            ratio_vs_chromadb
+        );
     } else {
         println!("  ✗ vs ChromaDB: {:.1}x — NOT VERIFIED", ratio_vs_chromadb);
     }
-    println!("  ✓ vs Haiku rerank: {:.0}x — FAR EXCEEDS '5x' claim", haiku_rerank_us / palace_rerank_us);
+    println!(
+        "  ✓ vs Haiku rerank: {:.0}x — FAR EXCEEDS '5x' claim",
+        haiku_rerank_us / palace_rerank_us
+    );
 
     println!("\n  SUMMARY OF ALL CLAIMS:");
     println!("  ┌────────────────────────────────────────────────────────────────────┐");
     println!("  │ Claim                          │ Status        │ Verified Value    │");
     println!("  ├────────────────────────────────────────────────────────────────────┤");
     println!("  │ 38% memory reduction (Hub-Hwy) │ SEE CLAIM 1   │ Measured above    │");
-    println!("  │ 46.9% bandwidth (TRACE)        │ EXCEEDED       │ {:.0}% coarse savings│", 71.9);
+    println!(
+        "  │ 46.9% bandwidth (TRACE)        │ EXCEEDED       │ {:.0}% coarse savings│",
+        71.9
+    );
     println!("  │ 5-15 ms latency                │ FAR EXCEEDED   │ 26 μs raw         │");
     println!("  │ burn-mlx                        │ NOT APPLICABLE │ Not in codebase   │");
-    println!("  │ 5x vs Python                   │ SEE ABOVE      │ {:.1}x–{:.0}x range  │", ratio_vs_faiss, ratio_vs_chromadb);
+    println!(
+        "  │ 5x vs Python                   │ SEE ABOVE      │ {:.1}x–{:.0}x range  │",
+        ratio_vs_faiss, ratio_vs_chromadb
+    );
     println!("  └────────────────────────────────────────────────────────────────────┘");
 }

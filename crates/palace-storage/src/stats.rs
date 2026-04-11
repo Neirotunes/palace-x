@@ -4,7 +4,7 @@
 //! and topological properties for monitoring and optimization.
 
 use crate::MemoryPalace;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// Comprehensive statistics about a MemoryPalace instance.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,11 +33,7 @@ pub struct PalaceStats {
 
 impl PalaceStats {
     /// Estimate memory for NSW graph storage
-    fn estimate_nsw_memory(
-        total_nodes: usize,
-        dimensions: usize,
-        max_neighbors: usize,
-    ) -> usize {
+    fn estimate_nsw_memory(total_nodes: usize, dimensions: usize, max_neighbors: usize) -> usize {
         if total_nodes == 0 {
             return 0;
         }
@@ -70,11 +66,7 @@ impl PalaceStats {
     }
 
     /// Estimate total memory usage
-    fn estimate_total_memory(
-        total_nodes: usize,
-        dimensions: usize,
-        max_neighbors: usize,
-    ) -> usize {
+    fn estimate_total_memory(total_nodes: usize, dimensions: usize, max_neighbors: usize) -> usize {
         let nsw_mem = Self::estimate_nsw_memory(total_nodes, dimensions, max_neighbors);
         let bitplane_mem = Self::estimate_bitplane_memory(total_nodes, dimensions);
 
@@ -149,8 +141,7 @@ mod tests {
         let dimensions = 128;
         let max_neighbors = 32;
 
-        let bitplane_coarse =
-            PalaceStats::estimate_bitplane_memory(total_nodes, dimensions);
+        let bitplane_coarse = PalaceStats::estimate_bitplane_memory(total_nodes, dimensions);
         let total_mem = PalaceStats::estimate_total_memory(total_nodes, dimensions, max_neighbors);
 
         assert!(bitplane_coarse > 0);
@@ -164,7 +155,8 @@ mod tests {
         let mem_200 = PalaceStats::estimate_bitplane_memory(200, 128);
 
         assert!(mem_200 > mem_100);
-        assert!(((mem_200 as isize) - (2 * mem_100) as isize).unsigned_abs() < mem_100 / 10); // Roughly 2x
+        assert!(((mem_200 as isize) - (2 * mem_100) as isize).unsigned_abs() < mem_100 / 10);
+        // Roughly 2x
     }
 
     #[test]
@@ -179,7 +171,7 @@ mod tests {
     #[tokio::test]
     async fn test_palace_stats_integration() {
         use crate::MemoryPalace;
-        use palace_core::{MetaData, MemoryProvider};
+        use palace_core::{MemoryProvider, MetaData};
 
         let palace = MemoryPalace::new(128);
 
@@ -187,10 +179,12 @@ mod tests {
         assert_eq!(stats_empty.total_nodes, 0);
 
         // Ingest some vectors
-        palace.ingest(vec![0.5; 128], MetaData::new(1000, "s1"))
+        palace
+            .ingest(vec![0.5; 128], MetaData::new(1000, "s1"))
             .await
             .unwrap();
-        palace.ingest(vec![0.5; 128], MetaData::new(1001, "s2"))
+        palace
+            .ingest(vec![0.5; 128], MetaData::new(1001, "s2"))
             .await
             .unwrap();
 

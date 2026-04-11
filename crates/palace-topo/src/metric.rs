@@ -41,12 +41,7 @@ use crate::ego_graph::EgoGraph;
 /// let d = d_total(cosine_dist, &ego_graph, 0.5, 0.5);
 /// // d combines cosine similarity with structural metrics
 /// ```
-pub fn d_total(
-    cosine_dist: f32,
-    ego_graph: &EgoGraph,
-    alpha: f32,
-    beta: f32,
-) -> f32 {
+pub fn d_total(cosine_dist: f32, ego_graph: &EgoGraph, alpha: f32, beta: f32) -> f32 {
     let b1 = beta_1(ego_graph) as f32;
     let e = ego_graph.num_edges.max(1) as f32;
 
@@ -77,15 +72,12 @@ mod tests {
         }
 
         fn add_edge(&mut self, u: NodeId, v: NodeId) {
-            self.adjacency.entry(u).or_insert_with(Vec::new).push(v);
-            self.adjacency.entry(v).or_insert_with(Vec::new).push(u);
+            self.adjacency.entry(u).or_default().push(v);
+            self.adjacency.entry(v).or_default().push(u);
         }
 
         fn neighbors(&self, node: NodeId) -> Vec<NodeId> {
-            self.adjacency
-                .get(&node)
-                .cloned()
-                .unwrap_or_default()
+            self.adjacency.get(&node).cloned().unwrap_or_default()
         }
     }
 
@@ -113,14 +105,16 @@ mod tests {
         triangle_graph.add_edge(NodeId(1), NodeId(2));
         triangle_graph.add_edge(NodeId(2), NodeId(0));
 
-        let triangle_ego = EgoGraph::build_pair(NodeId(0), NodeId(1), |node| triangle_graph.neighbors(node));
+        let triangle_ego =
+            EgoGraph::build_pair(NodeId(0), NodeId(1), |node| triangle_graph.neighbors(node));
 
         // Build a line (sparse structure: β₁=0)
         let mut line_graph = TestGraph::new();
         line_graph.add_edge(NodeId(0), NodeId(1));
         line_graph.add_edge(NodeId(1), NodeId(2));
 
-        let line_ego = EgoGraph::build_pair(NodeId(0), NodeId(1), |node| line_graph.neighbors(node));
+        let line_ego =
+            EgoGraph::build_pair(NodeId(0), NodeId(1), |node| line_graph.neighbors(node));
 
         let d_triangle = d_total(0.5, &triangle_ego, 0.5, 0.5);
         let d_line = d_total(0.5, &line_ego, 0.5, 0.5);
@@ -128,7 +122,12 @@ mod tests {
         // Triangle has β₁=1, E=3: exp(-1/3) ≈ 0.717
         // Line has β₁=0, E=2: exp(0) = 1.0
         // So triangle distance should be lower (more structure = tighter coupling)
-        assert!(d_triangle < d_line, "Triangle ({}) should have lower distance than line ({})", d_triangle, d_line);
+        assert!(
+            d_triangle < d_line,
+            "Triangle ({}) should have lower distance than line ({})",
+            d_triangle,
+            d_line
+        );
     }
 
     #[test]
@@ -203,6 +202,11 @@ mod tests {
         // Triangle: β₁=1, E=3, structural = exp(-1/3) ≈ 0.717
         // 4-cycle: β₁=1, E=4, structural = exp(-1/4) ≈ 0.778
         // So triangle should have slightly lower distance (higher cycle density)
-        assert!(d_tri < d_cycle, "Triangle ({}) should have lower distance than 4-cycle ({})", d_tri, d_cycle);
+        assert!(
+            d_tri < d_cycle,
+            "Triangle ({}) should have lower distance than 4-cycle ({})",
+            d_tri,
+            d_cycle
+        );
     }
 }

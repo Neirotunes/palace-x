@@ -95,9 +95,9 @@ mod tests {
     #[test]
     fn test_batch_topk_basic() {
         let query = vec![0xFFFFFFFFFFFFFFFF];
-        let cand1 = vec![0xFFFFFFFFFFFFFFFF]; // distance 0
-        let cand2 = vec![0x0000000000000000]; // distance 64
-        let cand3 = vec![0xAAAAAAAAAAAAAAAA]; // distance 32
+        let cand1 = [0xFFFFFFFFFFFFFFFF]; // distance 0
+        let cand2 = [0x0000000000000000]; // distance 64
+        let cand3 = [0xAAAAAAAAAAAAAAAA]; // distance 32
         let candidates = vec![&cand1[..], &cand2[..], &cand3[..]];
 
         let results = batch_hamming_topk(&query, &candidates, 2);
@@ -111,8 +111,8 @@ mod tests {
     #[test]
     fn test_batch_topk_k_larger_than_candidates() {
         let query = vec![0xFFFFFFFFFFFFFFFF];
-        let cand1 = vec![0xFFFFFFFFFFFFFFFF];
-        let cand2 = vec![0x0000000000000000];
+        let cand1 = [0xFFFFFFFFFFFFFFFF];
+        let cand2 = [0x0000000000000000];
         let candidates = vec![&cand1[..], &cand2[..]];
 
         let results = batch_hamming_topk(&query, &candidates, 10);
@@ -131,7 +131,7 @@ mod tests {
     #[test]
     fn test_batch_topk_k_zero() {
         let query = vec![0xFFFFFFFFFFFFFFFF];
-        let cand1 = vec![0xFFFFFFFFFFFFFFFF];
+        let cand1 = [0xFFFFFFFFFFFFFFFF];
         let candidates = vec![&cand1[..]];
 
         let results = batch_hamming_topk(&query, &candidates, 0);
@@ -141,9 +141,9 @@ mod tests {
     #[test]
     fn test_batch_nearest() {
         let query = vec![0xFFFFFFFFFFFFFFFF];
-        let cand1 = vec![0x0000000000000000];
-        let cand2 = vec![0xFFFFFFFFFFFFFFFF];
-        let cand3 = vec![0xAAAAAAAAAAAAAAAA];
+        let cand1 = [0x0000000000000000];
+        let cand2 = [0xFFFFFFFFFFFFFFFF];
+        let cand3 = [0xAAAAAAAAAAAAAAAA];
         let candidates = vec![&cand1[..], &cand2[..], &cand3[..]];
 
         let result = batch_hamming_nearest(&query, &candidates);
@@ -165,8 +165,8 @@ mod tests {
     #[test]
     fn test_batch_all() {
         let query = vec![0xFFFFFFFFFFFFFFFF];
-        let cand1 = vec![0xFFFFFFFFFFFFFFFF];
-        let cand2 = vec![0x0000000000000000];
+        let cand1 = [0xFFFFFFFFFFFFFFFF];
+        let cand2 = [0x0000000000000000];
         let candidates = vec![&cand1[..], &cand2[..]];
 
         let results = batch_hamming_all(&query, &candidates);
@@ -222,7 +222,11 @@ mod tests {
         let mut candidates = Vec::new();
 
         for i in 0..1000 {
-            let pattern = if i % 2 == 0 { 0xAAAAAAAAAAAAAAAA } else { 0x5555555555555555 };
+            let pattern = if i % 2 == 0 {
+                0xAAAAAAAAAAAAAAAA
+            } else {
+                0x5555555555555555
+            };
             candidates.push(vec![pattern; 16]);
         }
 

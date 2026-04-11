@@ -262,7 +262,7 @@ mod tests {
         // Verify against manual popcount
         let a = vec![0xAAAAAAAAAAAAAAAA]; // 32 ones
         let b = vec![0x5555555555555555]; // complement, 32 ones in different positions
-        // XOR gives all ones = 64 differences
+                                          // XOR gives all ones = 64 differences
         assert_eq!(hamming_distance_scalar(&a, &b), 64);
     }
 

@@ -88,11 +88,10 @@ impl BitPlaneStore {
 
                 for exp_plane in 0..8 {
                     let bit = (coarse.exponent[exp_plane][byte_idx] >> bit_idx) & 1;
-                    exponent_bits |= (bit as u8) << exp_plane;
+                    exponent_bits |= bit << exp_plane;
                 }
 
-                let reconstructed_bits =
-                    ((sign_bit as u32) << 31) | ((exponent_bits as u32) << 23);
+                let reconstructed_bits = ((sign_bit as u32) << 31) | ((exponent_bits as u32) << 23);
                 result.push(f32::from_bits(reconstructed_bits));
             }
 
@@ -130,7 +129,7 @@ impl BitPlaneStore {
             let mut exponent_bits = 0u8;
             for exp_plane in 0..8 {
                 let bit = (coarse.exponent[exp_plane][byte_idx] >> bit_idx) & 1;
-                exponent_bits |= (bit as u8) << exp_plane;
+                exponent_bits |= bit << exp_plane;
             }
 
             // Reconstruct mantissa (partial)
@@ -140,9 +139,8 @@ impl BitPlaneStore {
                 mantissa_bits_val |= (bit as u32) << mant_plane;
             }
 
-            let reconstructed_bits = ((sign_bit as u32) << 31)
-                | ((exponent_bits as u32) << 23)
-                | mantissa_bits_val;
+            let reconstructed_bits =
+                ((sign_bit as u32) << 31) | ((exponent_bits as u32) << 23) | mantissa_bits_val;
             result.push(f32::from_bits(reconstructed_bits));
         }
 

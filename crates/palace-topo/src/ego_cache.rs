@@ -4,8 +4,8 @@
 //! during topological reranking. The cache is invalidated per-node when
 //! the graph topology changes (insert/remove).
 
-use palace_core::NodeId;
 use crate::ego_graph::EgoGraph;
+use palace_core::NodeId;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -54,18 +54,18 @@ impl EgoCache {
         let mut entries = self.entries.write();
 
         if entries.len() >= self.capacity && !entries.contains_key(&node_id) {
-            if let Some((&oldest_id, _)) = entries
-                .iter()
-                .min_by_key(|(_, e)| e.last_access)
-            {
+            if let Some((&oldest_id, _)) = entries.iter().min_by_key(|(_, e)| e.last_access) {
                 entries.remove(&oldest_id);
             }
         }
 
-        entries.insert(node_id, CacheEntry {
-            ego,
-            last_access: tick,
-        });
+        entries.insert(
+            node_id,
+            CacheEntry {
+                ego,
+                last_access: tick,
+            },
+        );
     }
 
     /// Invalidate a single node's cached ego-graph.
@@ -100,7 +100,11 @@ impl EgoCache {
         let h = self.hits.load(Ordering::Relaxed) as f64;
         let m = self.misses.load(Ordering::Relaxed) as f64;
         let total = h + m;
-        if total == 0.0 { 0.0 } else { h / total * 100.0 }
+        if total == 0.0 {
+            0.0
+        } else {
+            h / total * 100.0
+        }
     }
 }
 

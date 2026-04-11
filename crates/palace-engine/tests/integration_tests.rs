@@ -8,7 +8,7 @@
 //! - Vacuum and cleanup
 //! - Statistics reporting
 
-use palace_engine::{MetaData, NodeId, PalaceEngine, SearchConfig};
+use palace_engine::{MetaData, PalaceEngine, SearchConfig};
 
 #[tokio::test]
 async fn test_engine_lifecycle() {
@@ -107,7 +107,7 @@ async fn test_concurrent_ingestion() {
                 ];
                 let meta = MetaData::new(
                     (task_id * 5 + i) as u64,
-                    &format!("task_{}_item_{}", task_id, i),
+                    format!("task_{}_item_{}", task_id, i),
                 );
                 let result = engine_clone.ingest(vector, meta).await;
                 results.push(result);
@@ -174,7 +174,7 @@ async fn test_vacuum_operation() {
     let mut ids = Vec::new();
     for i in 0..5 {
         let vector = vec![i as f32 / 10.0, 0.5, 0.25, 0.125];
-        let meta = MetaData::new(3000 + i as u64, &format!("vac_{}", i));
+        let meta = MetaData::new(3000 + i as u64, format!("vac_{}", i));
         let id = engine.ingest(vector, meta).await.expect("Ingest failed");
         ids.push(id);
     }
@@ -199,13 +199,8 @@ async fn test_search_with_custom_config() {
 
     // Ingest vectors
     for i in 0..10 {
-        let vector = vec![
-            (i as f32) / 100.0,
-            (i as f32) / 50.0,
-            0.5,
-            0.25,
-        ];
-        let meta = MetaData::new(4000 + i as u64, &format!("search_test_{}", i));
+        let vector = vec![(i as f32) / 100.0, (i as f32) / 50.0, 0.5, 0.25];
+        let meta = MetaData::new(4000 + i as u64, format!("search_test_{}", i));
         let _ = engine.ingest(vector, meta).await;
     }
 
@@ -216,10 +211,7 @@ async fn test_search_with_custom_config() {
     config.beta = 0.2;
 
     let query = vec![0.05, 0.1, 0.5, 0.25];
-    let results = engine
-        .search(query, config)
-        .await
-        .expect("Search failed");
+    let results = engine.search(query, config).await.expect("Search failed");
 
     assert!(!results.is_empty());
     assert!(results.len() <= 5);
@@ -244,7 +236,7 @@ async fn test_stats_reporting() {
     // Add some vectors
     for i in 0..10 {
         let vector = vec![0.1; 16];
-        let meta = MetaData::new(5000 + i as u64, &format!("stat_test_{}", i));
+        let meta = MetaData::new(5000 + i as u64, format!("stat_test_{}", i));
         let _ = engine.ingest(vector, meta).await;
     }
 
@@ -292,7 +284,7 @@ async fn test_concurrent_search() {
     // Ingest some data first
     for i in 0..20 {
         let vector = vec![(i as f32) / 100.0, 0.5, 0.25, 0.125];
-        let meta = MetaData::new(7000 + i as u64, &format!("concurrent_search_{}", i));
+        let meta = MetaData::new(7000 + i as u64, format!("concurrent_search_{}", i));
         let _ = engine.ingest(vector, meta).await;
     }
 
@@ -324,8 +316,7 @@ async fn test_concurrent_search() {
 
 #[tokio::test]
 async fn test_engine_with_custom_config() {
-    let engine =
-        PalaceEngine::start_with_config(8, 8, 100, 0.6, 0.4, 512);
+    let engine = PalaceEngine::start_with_config(8, 8, 100, 0.6, 0.4, 512);
 
     // Ingest a vector
     let vector = vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8];

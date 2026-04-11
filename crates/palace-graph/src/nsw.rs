@@ -5,8 +5,8 @@ use crate::node::{cosine_distance, hamming_distance, GraphNode, MetaData};
 use palace_core::NodeId;
 use parking_lot::RwLock;
 use rand::Rng;
-use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::cmp::Ordering;
+use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
 
 /// A candidate node with distance, used for min-heap operations
@@ -40,9 +40,9 @@ impl Ord for Candidate {
 /// Navigable Small World graph index
 pub struct NswIndex {
     nodes: RwLock<HashMap<NodeId, GraphNode>>,
-    max_neighbors: usize,        // M parameter
-    ef_construction: usize,      // ef during construction
-    ef_search: AtomicUsize,      // ef during search
+    max_neighbors: usize,           // M parameter
+    ef_construction: usize,         // ef during construction
+    ef_search: AtomicUsize,         // ef during search
     hub_cache: RwLock<Vec<NodeId>>, // top-K hub nodes
     next_id: AtomicU64,
     dimensions: usize,
@@ -74,11 +74,7 @@ impl NswIndex {
 
     /// Inserts a new vector into the index
     pub fn insert(&self, vector: Vec<f32>, metadata: MetaData) -> NodeId {
-        assert_eq!(
-            vector.len(),
-            self.dimensions,
-            "Vector dimension mismatch"
-        );
+        assert_eq!(vector.len(), self.dimensions, "Vector dimension mismatch");
 
         let id = self.next_id.fetch_add(1, AtomicOrdering::SeqCst);
         let node_id = NodeId(id);
@@ -117,7 +113,10 @@ impl NswIndex {
             let needs_prune = if let Some(neighbor_node) = nodes_lock.get_mut(neighbor_id) {
                 neighbor_node.neighbors.push(node_id);
                 if neighbor_node.neighbors.len() > self.max_neighbors {
-                    Some((neighbor_node.vector.clone(), neighbor_node.neighbors.clone()))
+                    Some((
+                        neighbor_node.vector.clone(),
+                        neighbor_node.neighbors.clone(),
+                    ))
                 } else {
                     None
                 }
@@ -179,8 +178,14 @@ impl NswIndex {
 
         if let Some(entry_node) = nodes.get(&entry_id) {
             let dist = cosine_distance(query_vec, &entry_node.vector);
-            candidates.push(std::cmp::Reverse(Candidate { id: entry_id, distance: dist }));
-            w.push(Candidate { id: entry_id, distance: dist });
+            candidates.push(std::cmp::Reverse(Candidate {
+                id: entry_id,
+                distance: dist,
+            }));
+            w.push(Candidate {
+                id: entry_id,
+                distance: dist,
+            });
         }
 
         let mut visited = HashSet::new();
@@ -225,7 +230,11 @@ impl NswIndex {
                             if w.len() > self.ef_construction {
                                 // Remove the farthest
                                 let mut vec: Vec<_> = w.into_iter().collect();
-                                vec.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap_or(Ordering::Equal));
+                                vec.sort_by(|a, b| {
+                                    a.distance
+                                        .partial_cmp(&b.distance)
+                                        .unwrap_or(Ordering::Equal)
+                                });
                                 vec.pop();
                                 w = vec.into_iter().collect();
                             }
@@ -242,7 +251,11 @@ impl NswIndex {
     ///
     /// Returns a vector of (NodeId, distance) tuples sorted by distance.
     pub fn search(&self, query: &[f32], ef: Option<usize>) -> Vec<(NodeId, f32)> {
-        assert_eq!(query.len(), self.dimensions, "Query vector dimension mismatch");
+        assert_eq!(
+            query.len(),
+            self.dimensions,
+            "Query vector dimension mismatch"
+        );
 
         let ef = ef.unwrap_or(self.ef_search.load(AtomicOrdering::Relaxed));
         let nodes = self.nodes.read();
@@ -268,8 +281,14 @@ impl NswIndex {
 
         if let Some(entry_node) = nodes.get(&entry_id) {
             let dist = cosine_distance(query, &entry_node.vector);
-            candidates.push(std::cmp::Reverse(Candidate { id: entry_id, distance: dist }));
-            w.push(Candidate { id: entry_id, distance: dist });
+            candidates.push(std::cmp::Reverse(Candidate {
+                id: entry_id,
+                distance: dist,
+            }));
+            w.push(Candidate {
+                id: entry_id,
+                distance: dist,
+            });
         }
 
         let mut visited = HashSet::new();
@@ -312,7 +331,11 @@ impl NswIndex {
 
                             if w.len() > ef {
                                 let mut vec: Vec<_> = w.into_iter().collect();
-                                vec.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap_or(Ordering::Equal));
+                                vec.sort_by(|a, b| {
+                                    a.distance
+                                        .partial_cmp(&b.distance)
+                                        .unwrap_or(Ordering::Equal)
+                                });
                                 vec.pop();
                                 w = vec.into_iter().collect();
                             }
@@ -356,7 +379,7 @@ impl NswIndex {
         visited.insert(entry_id);
 
         for _ in 0..ef {
-            let lowerbound = candidates.peek().map(|c| c.0.0).unwrap_or(u32::MAX);
+            let lowerbound = candidates.peek().map(|c| c.0 .0).unwrap_or(u32::MAX);
 
             if lowerbound > w.peek().map(|c| c.0).unwrap_or(u32::MAX) {
                 break;
@@ -373,9 +396,7 @@ impl NswIndex {
                     if let Some(neighbor_node) = nodes.get(neighbor_id) {
                         let dist = hamming_distance(query_binary, &neighbor_node.binary);
 
-                        if dist < w.peek().map(|c| c.0).unwrap_or(u32::MAX)
-                            || w.len() < ef
-                        {
+                        if dist < w.peek().map(|c| c.0).unwrap_or(u32::MAX) || w.len() < ef {
                             candidates.push(std::cmp::Reverse((dist, *neighbor_id)));
                             w.push((dist, *neighbor_id));
 
@@ -419,10 +440,7 @@ impl NswIndex {
         }
 
         // Update hub cache with top nodes
-        let mut hub_nodes: Vec<_> = nodes
-            .values()
-            .map(|n| (n.id, n.hub_score))
-            .collect();
+        let mut hub_nodes: Vec<_> = nodes.values().map(|n| (n.id, n.hub_score)).collect();
         hub_nodes.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal));
 
         let mut hub_cache = self.hub_cache.write();
@@ -467,7 +485,7 @@ impl NswIndex {
     pub fn remove(&self, id: NodeId) -> bool {
         let mut nodes = self.nodes.write();
 
-        if !nodes.remove(&id).is_some() {
+        if nodes.remove(&id).is_none() {
             return false;
         }
 
@@ -553,21 +571,27 @@ mod tests {
         let index = NswIndex::new(32, 32, 200);
 
         // Insert a distinctive vector
-        let query_vec = vec![1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-                              0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-                              0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-                              0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
-        let id = index.insert(query_vec.clone(), MetaData {
-            label: "query".to_string(),
-        });
+        let query_vec = vec![
+            1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        ];
+        let id = index.insert(
+            query_vec.clone(),
+            MetaData {
+                label: "query".to_string(),
+            },
+        );
 
         // Insert some other vectors
         for i in 1..5 {
             let mut v = vec![0.1; 32];
             v[0] = i as f32 * 0.1;
-            index.insert(v, MetaData {
-                label: format!("node_{}", i),
-            });
+            index.insert(
+                v,
+                MetaData {
+                    label: format!("node_{}", i),
+                },
+            );
         }
 
         // Search for the first vector
@@ -583,9 +607,12 @@ mod tests {
         // Insert some vectors
         for i in 0..20 {
             let v = vec![(i as f32 * 0.1).sin(); 32];
-            index.insert(v, MetaData {
-                label: format!("node_{}", i),
-            });
+            index.insert(
+                v,
+                MetaData {
+                    label: format!("node_{}", i),
+                },
+            );
         }
 
         index.update_hub_scores();
@@ -604,9 +631,12 @@ mod tests {
         // Insert vectors with controlled structure
         for i in 0..10 {
             let v = vec![(i as f32 * 0.1).sin(); 32];
-            index.insert(v, MetaData {
-                label: format!("node_{}", i),
-            });
+            index.insert(
+                v,
+                MetaData {
+                    label: format!("node_{}", i),
+                },
+            );
         }
 
         // Get 1-hop neighbors of node 0
@@ -623,16 +653,22 @@ mod tests {
         let index = NswIndex::new(64, 32, 200);
 
         let vector = vec![1.5; 64];
-        let id = index.insert(vector.clone(), MetaData {
-            label: "test".to_string(),
-        });
+        let id = index.insert(
+            vector.clone(),
+            MetaData {
+                label: "test".to_string(),
+            },
+        );
 
         // Insert some other vectors
         for i in 1..5 {
             let v = vec![i as f32 * 0.1; 64];
-            index.insert(v, MetaData {
-                label: format!("node_{}", i),
-            });
+            index.insert(
+                v,
+                MetaData {
+                    label: format!("node_{}", i),
+                },
+            );
         }
 
         // Create binary representation of vector
@@ -660,15 +696,24 @@ mod tests {
     fn test_remove_node() {
         let index = NswIndex::new(32, 16, 100);
 
-        let id1 = index.insert(vec![1.0; 32], MetaData {
-            label: "node1".to_string(),
-        });
-        let id2 = index.insert(vec![2.0; 32], MetaData {
-            label: "node2".to_string(),
-        });
-        let id3 = index.insert(vec![3.0; 32], MetaData {
-            label: "node3".to_string(),
-        });
+        let _id1 = index.insert(
+            vec![1.0; 32],
+            MetaData {
+                label: "node1".to_string(),
+            },
+        );
+        let id2 = index.insert(
+            vec![2.0; 32],
+            MetaData {
+                label: "node2".to_string(),
+            },
+        );
+        let _id3 = index.insert(
+            vec![3.0; 32],
+            MetaData {
+                label: "node3".to_string(),
+            },
+        );
 
         assert_eq!(index.len(), 3);
 

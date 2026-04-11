@@ -121,7 +121,7 @@ impl BitPlaneVector {
             let mut exponent_bits = 0u8;
             for exp_plane in 0..Self::NUM_EXPONENT_BITS {
                 let bit = (self.exponent_planes[exp_plane][byte_idx] >> bit_idx) & 1;
-                exponent_bits |= (bit as u8) << exp_plane;
+                exponent_bits |= bit << exp_plane;
             }
 
             // Reconstruct mantissa bits
@@ -132,9 +132,8 @@ impl BitPlaneVector {
             }
 
             // Reconstruct the full 32-bit representation
-            let reconstructed_bits = ((sign_bit as u32) << 31)
-                | ((exponent_bits as u32) << 23)
-                | mantissa_bits_val;
+            let reconstructed_bits =
+                ((sign_bit as u32) << 31) | ((exponent_bits as u32) << 23) | mantissa_bits_val;
 
             result.push(f32::from_bits(reconstructed_bits));
         }
@@ -184,7 +183,12 @@ mod tests {
         let reconstructed = bpv.reconstruct_full();
 
         for (orig, recon) in original.iter().zip(reconstructed.iter()) {
-            assert!((orig - recon).abs() < 1e-6, "Expected {}, got {}", orig, recon);
+            assert!(
+                (orig - recon).abs() < 1e-6,
+                "Expected {}, got {}",
+                orig,
+                recon
+            );
         }
     }
 
@@ -250,9 +254,16 @@ mod tests {
         // Original: 4096 bytes
         // Coarse (1 + 8 planes): 9 * 128 = 1152 bytes -> ~0.28
         // Full (1 + 8 + 23 planes): 32 * 128 = 4096 bytes -> 1.0
-        assert!(coarse_ratio < 0.3, "Coarse ratio too high: {}", coarse_ratio);
+        assert!(
+            coarse_ratio < 0.3,
+            "Coarse ratio too high: {}",
+            coarse_ratio
+        );
         assert!((full_ratio - 1.0).abs() < 0.01, "Full ratio should be ~1.0");
-        assert!(coarse_ratio < full_ratio, "Coarse should be smaller than full");
+        assert!(
+            coarse_ratio < full_ratio,
+            "Coarse should be smaller than full"
+        );
     }
 
     #[test]
@@ -292,7 +303,12 @@ mod tests {
             let bpv = BitPlaneVector::from_f32(&vector);
             let reconstructed = bpv.reconstruct_full();
 
-            assert_eq!(reconstructed.len(), dim, "Dimension mismatch for size {}", dim);
+            assert_eq!(
+                reconstructed.len(),
+                dim,
+                "Dimension mismatch for size {}",
+                dim
+            );
             for (orig, recon) in vector.iter().zip(reconstructed.iter()) {
                 assert!(
                     (orig - recon).abs() < 1e-5,

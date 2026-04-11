@@ -75,12 +75,20 @@ impl PalaceEngine {
 
         while let Some(cmd) = rx.recv().await {
             match cmd {
-                Command::Ingest { vector, metadata, reply } => {
+                Command::Ingest {
+                    vector,
+                    metadata,
+                    reply,
+                } => {
                     debug!("Processing Ingest command");
                     let result = palace.ingest(vector, metadata).await;
                     let _ = reply.send(result);
                 }
-                Command::Search { query, config, reply } => {
+                Command::Search {
+                    query,
+                    config,
+                    reply,
+                } => {
                     debug!("Processing Search command with limit={}", config.limit);
                     let result = palace.retrieve(&query, &config).await;
                     let _ = reply.send(result);
@@ -110,13 +118,22 @@ impl PalaceEngine {
     /// # Arguments
     /// * `vector` - The embedding vector
     /// * `metadata` - Associated metadata
-    pub async fn ingest(&self, vector: Vec<f32>, metadata: MetaData) -> Result<NodeId, MemoryError> {
+    pub async fn ingest(
+        &self,
+        vector: Vec<f32>,
+        metadata: MetaData,
+    ) -> Result<NodeId, MemoryError> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.sender
-            .send(Command::Ingest { vector, metadata, reply: tx })
+            .send(Command::Ingest {
+                vector,
+                metadata,
+                reply: tx,
+            })
             .await
             .map_err(|_| MemoryError::StorageError("Engine shutdown".into()))?;
-        rx.await.map_err(|_| MemoryError::StorageError("Engine dropped".into()))?
+        rx.await
+            .map_err(|_| MemoryError::StorageError("Engine dropped".into()))?
     }
 
     /// Search for similar vectors
@@ -131,10 +148,15 @@ impl PalaceEngine {
     ) -> Result<Vec<Fragment>, MemoryError> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.sender
-            .send(Command::Search { query, config, reply: tx })
+            .send(Command::Search {
+                query,
+                config,
+                reply: tx,
+            })
             .await
             .map_err(|_| MemoryError::StorageError("Engine shutdown".into()))?;
-        rx.await.map_err(|_| MemoryError::StorageError("Engine dropped".into()))?
+        rx.await
+            .map_err(|_| MemoryError::StorageError("Engine dropped".into()))?
     }
 
     /// Remove nodes from the palace
@@ -147,7 +169,8 @@ impl PalaceEngine {
             .send(Command::Vacuum { nodes, reply: tx })
             .await
             .map_err(|_| MemoryError::StorageError("Engine shutdown".into()))?;
-        rx.await.map_err(|_| MemoryError::StorageError("Engine dropped".into()))?
+        rx.await
+            .map_err(|_| MemoryError::StorageError("Engine dropped".into()))?
     }
 
     /// Get statistics about the engine state
@@ -157,7 +180,8 @@ impl PalaceEngine {
             .send(Command::Stats { reply: tx })
             .await
             .map_err(|_| MemoryError::StorageError("Engine shutdown".into()))?;
-        rx.await.map_err(|_| MemoryError::StorageError("Engine dropped".into()))?
+        rx.await
+            .map_err(|_| MemoryError::StorageError("Engine dropped".into()))?
     }
 
     /// Gracefully shut down the engine

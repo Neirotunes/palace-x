@@ -1,7 +1,7 @@
 //! Graph node representation with binary quantization
 
-use serde::{Deserialize, Serialize};
 use palace_core::NodeId;
+use serde::{Deserialize, Serialize};
 
 /// Metadata associated with a node
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -122,7 +122,10 @@ mod tests {
         let v1 = vec![1.0, 2.0, 3.0];
         let v2 = vec![1.0, 2.0, 3.0];
         let dist = cosine_distance(&v1, &v2);
-        assert!((dist - 0.0).abs() < 1e-5, "Identical vectors should have distance 0");
+        assert!(
+            (dist - 0.0).abs() < 1e-5,
+            "Identical vectors should have distance 0"
+        );
     }
 
     #[test]
@@ -130,7 +133,10 @@ mod tests {
         let v1 = vec![1.0, 0.0];
         let v2 = vec![0.0, 1.0];
         let dist = cosine_distance(&v1, &v2);
-        assert!((dist - 1.0).abs() < 1e-5, "Orthogonal vectors should have distance 1");
+        assert!(
+            (dist - 1.0).abs() < 1e-5,
+            "Orthogonal vectors should have distance 1"
+        );
     }
 
     #[test]
@@ -138,7 +144,10 @@ mod tests {
         let v1 = vec![1.0, 0.0];
         let v2 = vec![-1.0, 0.0];
         let dist = cosine_distance(&v1, &v2);
-        assert!((dist - 2.0).abs() < 1e-5, "Opposite vectors should have distance 2");
+        assert!(
+            (dist - 2.0).abs() < 1e-5,
+            "Opposite vectors should have distance 2"
+        );
     }
 
     #[test]

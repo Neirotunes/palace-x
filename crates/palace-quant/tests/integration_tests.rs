@@ -1,10 +1,9 @@
 //! Integration tests verifying correctness and correlation between metrics
+#![allow(clippy::useless_vec)]
 
 use palace_quant::{
-    binary::quantize_binary,
+    batch::batch_hamming_topk, binary::quantize_binary, cosine::cosine_distance,
     hamming::hamming_distance,
-    cosine::cosine_distance,
-    batch::batch_hamming_topk,
 };
 
 #[test]
@@ -67,8 +66,14 @@ fn test_hamming_cosine_correlation() {
     let c03 = cosine_distance(query, &vectors[3]);
 
     // Verify correlation: closer in cosine -> closer in Hamming
-    assert!(h01 < h03, "Similar vectors should have smaller Hamming distance");
-    assert!(c01 < c03, "Similar vectors should have smaller cosine distance");
+    assert!(
+        h01 < h03,
+        "Similar vectors should have smaller Hamming distance"
+    );
+    assert!(
+        c01 < c03,
+        "Similar vectors should have smaller cosine distance"
+    );
 }
 
 #[test]
@@ -77,11 +82,11 @@ fn test_batch_topk_returns_sorted_results() {
     let query = quantize_binary(&query_vec);
 
     let candidates = vec![
-        vec![1.0, 0.5, -0.5, 0.2],      // identical
-        vec![1.0, 0.5, -0.5, -0.2],     // one bit different
-        vec![1.0, 0.5, 0.5, 0.2],       // one bit different
-        vec![-1.0, -0.5, 0.5, -0.2],    // all bits different
-        vec![0.9, 0.4, -0.6, 0.1],      // similar but slightly different
+        vec![1.0, 0.5, -0.5, 0.2],   // identical
+        vec![1.0, 0.5, -0.5, -0.2],  // one bit different
+        vec![1.0, 0.5, 0.5, 0.2],    // one bit different
+        vec![-1.0, -0.5, 0.5, -0.2], // all bits different
+        vec![0.9, 0.4, -0.6, 0.1],   // similar but slightly different
     ];
 
     let quantized: Vec<Vec<u64>> = candidates.iter().map(|v| quantize_binary(v)).collect();
@@ -93,13 +98,19 @@ fn test_batch_topk_returns_sorted_results() {
 
     // Verify results are sorted by distance (ascending)
     for i in 0..results.len() - 1 {
-        assert!(results[i].1 <= results[i + 1].1,
+        assert!(
+            results[i].1 <= results[i + 1].1,
             "Results must be sorted by distance: {} > {}",
-            results[i].1, results[i + 1].1);
+            results[i].1,
+            results[i + 1].1
+        );
     }
 
     // First result should be identical or very close
-    assert!(results[0].1 < 5, "Top result should have very small distance");
+    assert!(
+        results[0].1 < 5,
+        "Top result should have very small distance"
+    );
 }
 
 #[test]
@@ -135,9 +146,7 @@ fn test_batch_topk_with_larger_vectors() {
 #[test]
 fn test_all_backends_agree_on_random_data() {
     // Generate some random-ish data and verify all backends produce same results
-    use palace_quant::hamming::{
-        hamming_distance_scalar,
-    };
+    use palace_quant::hamming::hamming_distance_scalar;
 
     let a = vec![
         0xDEADBEEFCAFEBABE,
