@@ -1,3 +1,6 @@
+// Copyright (c) 2026 M.Diach <max@neirosynth.com>
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Topological reranker for Stage 2 refinement of retrieval candidates.
 //!
 //! The TopologicalReranker takes a set of candidates from Stage 1 (NSW coarse search)

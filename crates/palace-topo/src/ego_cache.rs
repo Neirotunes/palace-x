@@ -1,3 +1,6 @@
+// Copyright (c) 2026 M.Diach <max@neirosynth.com>
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! LRU-style ego-graph cache with concurrent access.
 //!
 //! Pre-computed ego-graphs are cached to avoid redundant BFS traversals

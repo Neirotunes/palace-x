@@ -1,0 +1,16 @@
+Palace-X — High-Performance Topological Memory Engine
+Copyright (c) 2026 M.Diach <max@neirosynth.com>
+
+This software is licensed under the GNU Affero General Public License v3.0
+or later (AGPL-3.0-or-later). See LICENSE for the full text.
+
+Original author: M.Diach (Neirotunes)
+Repository: https://github.com/Neirotunes/palace-x
+
+This project includes the following original contributions:
+- RaBitQ integration (based on Gao & Long, SIGMOD 2024)
+- Topological reranking via Betti numbers (original work)
+- NEON SIMD Hamming distance with runtime dispatch
+- Hub-Highway NSW graph optimization
+
+All source files contain SPDX license identifiers.

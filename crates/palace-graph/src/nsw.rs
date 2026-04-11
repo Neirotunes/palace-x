@@ -1,3 +1,6 @@
+// Copyright (c) 2026 M.Diach <max@neirosynth.com>
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Navigable Small World (NSW) index implementation
 
 use crate::heuristic::select_neighbors_heuristic;

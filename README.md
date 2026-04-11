@@ -1,5 +1,7 @@
 # Palace-X
 
+> Copyright (c) 2026 M.Diach — Licensed under [AGPL-3.0-or-later](LICENSE)
+
 **High-performance hierarchical memory system for autonomous AI agents.**
 
 Palace-X transforms the "memory palace" metaphor into a deterministic engineering construct.

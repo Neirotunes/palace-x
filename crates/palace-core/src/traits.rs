@@ -1,3 +1,6 @@
+// Copyright (c) 2026 M.Diach <max@neirosynth.com>
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 use crate::error::MemoryError;
 use crate::types::{Fragment, MetaData, NodeId, SearchConfig};
 

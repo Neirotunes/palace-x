@@ -1,3 +1,6 @@
+// Copyright (c) 2026 M.Diach <max@neirosynth.com>
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Batch operations for Hamming distance queries.
 //!
 //! Efficiently compute top-k nearest neighbors using Hamming distance.

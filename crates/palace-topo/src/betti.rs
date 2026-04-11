@@ -1,3 +1,6 @@
+// Copyright (c) 2026 M.Diach <max@neirosynth.com>
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Topological invariants: β₀ (connected components), β₁ (first Betti number), and Euler characteristic.
 //!
 //! The first Betti number β₁ counts the number of independent cycles in a graph.

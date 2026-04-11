@@ -1,3 +1,6 @@
+// Copyright (c) 2026 M.Diach <max@neirosynth.com>
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Recall/precision tests for the NSW index.
 //!
 //! These tests measure the quality of approximate nearest-neighbor search
