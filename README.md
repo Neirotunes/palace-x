@@ -23,15 +23,24 @@ Reproducible via `cargo run -p palace-bench --release`.
 
 <!-- BENCHMARK_TABLE_START -->
 
-> **Run the benchmarks yourself to fill this table with real numbers:**
->
-> ```bash
-> mkdir -p data
-> cargo run -p palace-bench --release
-> # SIFT-10K will be auto-downloaded on first run
-> ```
->
-> The benchmark suite outputs a Markdown table you can paste here directly.
+| Method | R@1 | R@10 | R@100 | QPS | Memory/vec |
+|--------|-----|------|-------|-----|------------|
+| Brute-force L2 (baseline) | **100.0%** | **100.0%** | **100.0%** | 389 | D×4 B |
+| RaBitQ 1-bit (brute) | 52.0% | 54.0% | 65.0% | 346 | D/8+16 B |
+| RaBitQ 4-bit (brute) | 52.0% | 54.0% | 65.0% | 342 | D/2+16 B |
+| Naive binary / Hamming (brute) | 26.0% | 15.5% | 15.2% | 3,667 | D/8 B |
+| NSW L2 (ef=32) | 1.0% | 1.0% | 3.0% | 6,494 | D×4+graph |
+| NSW L2 (ef=256) | 1.0% | 1.9% | 9.2% | 1,247 | D×4+graph |
+| NSW + RaBitQ-1bit (ef=256) | 0.0% | 1.5% | 8.2% | 1,683 | D/8+16+graph |
+
+> **Note:** NSW graph recall is currently limited by flat-graph construction quality
+> (early nodes get poor neighborhoods). HNSW-style hierarchical build is planned for v0.2.
+> The RaBitQ brute-force results demonstrate the quantization quality independent of graph issues.
+
+```bash
+# Reproduce these numbers
+cargo run -p palace-bench --release -- --sift
+```
 
 <!-- BENCHMARK_TABLE_END -->
 
@@ -169,14 +178,16 @@ let rq_query = rq.encode_query(&query);
 
 ## Quantization Methods
 
-| Method | Storage/vec | Recall | Description |
-|--------|------------|--------|-------------|
-| Naive binary | D/8 B | Low | Sign-bit quantization + Hamming |
-| RaBitQ 1-bit | D/8 + 16 B | High | Random rotation + scalar correction |
-| RaBitQ 4-bit | D/2 + 16 B | Higher | 4 bit-planes + asymmetric distance |
-| Full FP32 | D×4 B | Perfect | Brute-force baseline |
+| Method | Storage/vec | R@10 (SIFT-10K) | Description |
+|--------|------------|-----------------|-------------|
+| Naive binary | D/8 B | 15.5% | Sign-bit quantization + Hamming |
+| RaBitQ 1-bit | D/8 + 16 B | 54.0% | Random rotation + scalar correction |
+| RaBitQ 4-bit | D/2 + 16 B | 54.0%* | 4 bit-planes + asymmetric distance |
+| Full FP32 | D×4 B | 100.0% | Brute-force baseline |
 
-RaBitQ uses a Fast Hadamard Transform (FHT) for O(D log D) random rotation instead of O(D²) matrix multiplication. The 4-bit variant stores each dimension as 4 bit-planes, enabling popcount-based distance estimation with significantly better recall than 1-bit.
+\* RaBitQ 4-bit currently uses only the MSB sign plane for distance estimation, so recall matches 1-bit. Multi-bit distance computation is planned for v0.2.
+
+RaBitQ uses a Fast Hadamard Transform (FHT) for O(D log D) random rotation instead of O(D²) matrix multiplication. The asymmetric distance formula `est_ip = norm/(x0·√D) · ⟨x_bar, q'⟩` keeps the query unquantized for higher accuracy.
 
 <br/>
 
