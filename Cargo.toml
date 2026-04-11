@@ -1,0 +1,35 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/palace-core",
+    "crates/palace-quant",
+    "crates/palace-graph",
+    "crates/palace-topo",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+authors = ["m.Diach <max@neirosynth.com>"]
+description = "Palace-X: High-performance topological memory engine for autonomous AI agents"
+repository = "https://github.com/dyachmx/palace-x"
+keywords = ["memory", "agents", "topological", "simd", "retrieval"]
+categories = ["algorithms", "data-structures", "science"]
+
+[workspace.dependencies]
+palace-core = { path = "crates/palace-core" }
+palace-quant = { path = "crates/palace-quant" }
+palace-graph = { path = "crates/palace-graph" }
+palace-topo = { path = "crates/palace-topo" }
+
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+rand = "0.8"
+parking_lot = "0.12"
+rayon = "1.10"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1

@@ -1,0 +1,24 @@
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.so
+*.dylib
+*.dll
+
+# Internal docs (not for public repo)
+Palace-X_GTM_Strategy.docx
+Palace-X_v5.1_Verified_Specification.md
