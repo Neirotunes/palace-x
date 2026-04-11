@@ -1,0 +1,23 @@
+[package]
+name = "palace-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+palace-core = { workspace = true }
+palace-quant = { workspace = true }
+palace-graph = { workspace = true }
+palace-topo = { workspace = true }
+palace-bitplane = { workspace = true }
+parking_lot = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+rand = { workspace = true }
+tokio = { version = "1", features = ["full", "test-util"] }

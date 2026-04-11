@@ -1,0 +1,18 @@
+[package]
+name = "palace-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+palace-core = { workspace = true }
+palace-quant = { workspace = true }
+palace-graph = { workspace = true }
+palace-topo = { workspace = true }
+palace-bitplane = { workspace = true }
+palace-storage = { workspace = true }
+palace-engine = { workspace = true }
+tokio = { workspace = true }
+rand = { workspace = true }
