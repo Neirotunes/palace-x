@@ -9,7 +9,3 @@ repository.workspace = true
 [dependencies]
 serde = { workspace = true }
 thiserror = { workspace = true }
-
-[dev-dependencies]
-palace-storage = { workspace = true }
-tokio = { version = "1", features = ["full", "test-util"] }

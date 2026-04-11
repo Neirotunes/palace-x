@@ -57,7 +57,7 @@ unsafe fn hamming_avx512(a: &[u64], b: &[u64]) -> u32 {
     sum as u32
 }
 
-/// NEON Hamming distance using vcntq_u8
+/// NEON Hamming distance using vcntq_u8 with 512-bit unrolling (Silicon-Native)
 #[cfg(target_arch = "aarch64")]
 #[inline]
 #[target_feature(enable = "neon")]
@@ -66,34 +66,67 @@ unsafe fn hamming_neon(a: &[u64], b: &[u64]) -> u32 {
 
     debug_assert_eq!(a.len(), b.len(), "Input slices must have equal length");
 
-    let mut sum: u32 = 0;
-    let mut i = 0;
+    let mut i = 0usize;
+    let len = a.len();
+    let mut total_sum: u32 = 0;
 
-    // Process 2 u64s at a time (128 bits = 16 bytes)
-    while i + 2 <= a.len() {
-        // Load two u64s and XOR
-        let a_pair = [a[i], a[i + 1]];
-        let b_pair = [b[i], b[i + 1]];
-        let xor_pair = [a_pair[0] ^ b_pair[0], a_pair[1] ^ b_pair[1]];
+    // Process in 512-bit blocks (8 u64s)
+    while i + 8 <= len {
+        let mut acc0 = vdupq_n_u8(0);
+        let mut acc1 = vdupq_n_u8(0);
+        let mut acc2 = vdupq_n_u8(0);
+        let mut acc3 = vdupq_n_u8(0);
 
-        // Reinterpret as u8x16 and count bits
-        let xor_bytes = vreinterpretq_u8_u64(vld1q_u64(xor_pair.as_ptr()));
-        let counts = vcntq_u8(xor_bytes);
+        // Sub-loop to avoid u8 overflow for extremely large vectors
+        // Max iterations per sub-loop: 31 (31 * 8 = 248 bits in a byte lane)
+        let end = (i + 8 * 31).min(len - (len % 8));
+        while i + 8 <= end {
+            // Load 512 bits from A and B directly from memory
+            let a0 = vld1q_u64(a.as_ptr().add(i));
+            let a1 = vld1q_u64(a.as_ptr().add(i + 2));
+            let a2 = vld1q_u64(a.as_ptr().add(i + 4));
+            let a3 = vld1q_u64(a.as_ptr().add(i + 6));
 
-        // Horizontal sum of u8 vector
-        let sum_u8 = vaddvq_u8(counts) as u32;
-        sum += sum_u8;
+            let b0 = vld1q_u64(b.as_ptr().add(i));
+            let b1 = vld1q_u64(b.as_ptr().add(i + 2));
+            let b2 = vld1q_u64(b.as_ptr().add(i + 4));
+            let b3 = vld1q_u64(b.as_ptr().add(i + 6));
 
+            // XOR and popcount
+            acc0 = vaddq_u8(acc0, vcntq_u8(vreinterpretq_u8_u64(veorq_u64(a0, b0))));
+            acc1 = vaddq_u8(acc1, vcntq_u8(vreinterpretq_u8_u64(veorq_u64(a1, b1))));
+            acc2 = vaddq_u8(acc2, vcntq_u8(vreinterpretq_u8_u64(veorq_u64(a2, b2))));
+            acc3 = vaddq_u8(acc3, vcntq_u8(vreinterpretq_u8_u64(veorq_u64(a3, b3))));
+
+            i += 8;
+        }
+
+        // Reduce each accumulator separately to avoid u8 overflow when combining
+        for acc in [acc0, acc1, acc2, acc3] {
+            let sum16 = vpaddlq_u8(acc);
+            let sum32 = vpaddlq_u16(sum16);
+            let sum64 = vpaddlq_u32(sum32);
+            total_sum += (vgetq_lane_u64(sum64, 0) + vgetq_lane_u64(sum64, 1)) as u32;
+        }
+    }
+
+    // Handle remaining blocks (128-bit)
+    while i + 2 <= len {
+        let a_vec = vld1q_u64(a.as_ptr().add(i));
+        let b_vec = vld1q_u64(b.as_ptr().add(i));
+        let xor = veorq_u64(a_vec, b_vec);
+        let counts = vcntq_u8(vreinterpretq_u8_u64(xor));
+        total_sum += vaddvq_u8(counts) as u32;
         i += 2;
     }
 
-    // Handle remainder with scalar
-    while i < a.len() {
-        sum += (a[i] ^ b[i]).count_ones();
+    // Handle scalar remainder
+    while i < len {
+        total_sum += (a[i] ^ b[i]).count_ones();
         i += 1;
     }
 
-    sum
+    total_sum
 }
 
 /// Detect and cache the best available backend at runtime

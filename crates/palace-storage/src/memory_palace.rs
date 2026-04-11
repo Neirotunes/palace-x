@@ -23,10 +23,16 @@ pub struct MemoryPalace {
     pub(crate) reranker: TopologicalReranker,
     pub(crate) ego_cache: EgoCache,
     pub(crate) dimensions: usize,
-    vector_store: RwLock<HashMap<NodeId, Vec<f32>>>,
+    vector_store: RwLock<HashMap<NodeId, *const f32>>,
     metadata_store: RwLock<HashMap<NodeId, MetaData>>,
+    arena: palace_optimizer::UmaArena,
+    thermal: palace_optimizer::ThermalGuard,
     next_id: AtomicU64,
 }
+
+// MemoryPalace is Sync because pointers in UmaArena are stable for the lifetime of the arena
+unsafe impl Sync for MemoryPalace {}
+unsafe impl Send for MemoryPalace {}
 
 impl MemoryPalace {
     /// Creates a new MemoryPalace with default parameters.
@@ -66,6 +72,8 @@ impl MemoryPalace {
             dimensions,
             vector_store: RwLock::new(std::collections::HashMap::new()),
             metadata_store: RwLock::new(std::collections::HashMap::new()),
+            arena: palace_optimizer::UmaArena::new(1024 * 1024 * 1024), // 1GB UMA Arena
+            thermal: palace_optimizer::ThermalGuard::default(),
             next_id: AtomicU64::new(0),
         }
     }
@@ -108,7 +116,7 @@ impl MemoryProvider for MemoryPalace {
 
         // Create metadata for graph layer
         let graph_meta = GraphMetaData {
-            label: format!("node_{}", id_u64),
+            label: format!("node_{}", node_id.0),
         };
 
         // Insert into NSW index
@@ -122,10 +130,20 @@ impl MemoryProvider for MemoryPalace {
             })?;
         }
 
-        // Store original vector for reranking
+        // Store original vector for reranking in the UMA Arena
+        let byte_size = self.dimensions * std::mem::size_of::<f32>();
+        let arena_ptr = self.arena.alloc_raw(byte_size, 128).ok_or_else(|| {
+            MemoryError::StorageError("Arena allocation failed: out of memory".into())
+        })? as *mut f32;
+
+        unsafe {
+            std::ptr::copy_nonoverlapping(vector.as_ptr(), arena_ptr, self.dimensions);
+        }
+
+        // Store pointer for reranking
         {
             let mut store = self.vector_store.write();
-            store.insert(node_id, vector);
+            store.insert(node_id, arena_ptr);
         }
 
         // Store metadata
@@ -180,7 +198,14 @@ impl MemoryProvider for MemoryPalace {
         }
 
         // Stage 1: Coarse search via NSW (using cosine distances from the index)
-        let candidates = self.nsw.search(query, Some(config.rerank_k));
+        // Silicon-Native Optimization: Throttling Search based on Thermal Load
+        let mut rerank_k = config.rerank_k;
+        if self.thermal.should_throttle() {
+            rerank_k = (rerank_k / 2).max(config.limit);
+            tracing::warn!("Thermal throttle active: reducing rerank_k to {}", rerank_k);
+        }
+
+        let candidates = self.nsw.search(query, Some(rerank_k));
 
         if candidates.is_empty() {
             return Ok(Vec::new());
@@ -196,11 +221,15 @@ impl MemoryProvider for MemoryPalace {
             .filter_map(|(nsw_id, _nsw_cosine_dist)| {
                 let node_id = *nsw_id;
 
-                // Retrieve full vector and metadata for refinement stages
-                vector_store.get(&node_id).and_then(|vector| {
+                // Retrieve full vector from UMA Arena and metadata
+                vector_store.get(&node_id).and_then(|&ptr| {
                     metadata_store.get(&node_id).map(|meta| {
-                        // Compute precise cosine distance for scoring
-                        let cosine_dist = compute_cosine_distance(query, vector);
+                        // Create slice from raw pointer (zero-copy)
+                        let vector_slice =
+                            unsafe { std::slice::from_raw_parts(ptr, self.dimensions) };
+
+                        // Compute precise cosine distance using NEON SIMD
+                        let cosine_dist = compute_cosine_distance(query, vector_slice);
 
                         Fragment {
                             node_id,
@@ -282,6 +311,13 @@ impl MemoryProvider for MemoryPalace {
 }
 
 impl MemoryPalace {
+    /// Silicon-Native Support: Get raw pointer to a vector for hardware prefetching.
+    pub fn get_vector_ptr(&self, node_id: NodeId) -> Option<*const f32> {
+        self.vector_store.read().get(&node_id).copied()
+    }
+}
+
+impl MemoryPalace {
     /// Performs Stage 2 topological reranking.
     ///
     /// Converts Fragments to TopologicalReranker format and reranks using ego-graph analysis.
@@ -350,30 +386,38 @@ impl MemoryPalace {
 
 /// Computes cosine distance between two vectors (0=identical, 1=perpendicular).
 fn compute_cosine_distance(a: &[f32], b: &[f32]) -> f32 {
-    if a.is_empty() || b.is_empty() {
-        return 1.0;
+    #[cfg(target_arch = "aarch64")]
+    {
+        unsafe { palace_optimizer::simd::cosine_distance_neon(a, b) }
     }
 
-    let mut dot_product = 0.0;
-    let mut norm_a = 0.0;
-    let mut norm_b = 0.0;
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        if a.is_empty() || b.is_empty() {
+            return 1.0;
+        }
 
-    for (av, bv) in a.iter().zip(b.iter()) {
-        dot_product += av * bv;
-        norm_a += av * av;
-        norm_b += bv * bv;
+        let mut dot_product = 0.0;
+        let mut norm_a = 0.0;
+        let mut norm_b = 0.0;
+
+        for (av, bv) in a.iter().zip(b.iter()) {
+            dot_product += av * bv;
+            norm_a += av * av;
+            norm_b += bv * bv;
+        }
+
+        norm_a = norm_a.sqrt();
+        norm_b = norm_b.sqrt();
+
+        if norm_a == 0.0 || norm_b == 0.0 {
+            return 1.0;
+        }
+
+        let similarity = dot_product / (norm_a * norm_b);
+        // Clamp to [0, 1]
+        ((1.0 - similarity) / 2.0).max(0.0).min(1.0)
     }
-
-    norm_a = norm_a.sqrt();
-    norm_b = norm_b.sqrt();
-
-    if norm_a == 0.0 || norm_b == 0.0 {
-        return 1.0;
-    }
-
-    let similarity = dot_product / (norm_a * norm_b);
-    // Clamp to [0, 1]
-    ((1.0 - similarity) / 2.0).max(0.0).min(1.0)
 }
 
 #[cfg(test)]

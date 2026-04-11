@@ -2,12 +2,15 @@
 
 use crate::heuristic::select_neighbors_heuristic;
 use crate::node::{cosine_distance, hamming_distance, GraphNode, MetaData};
+use arc_swap::ArcSwap;
+use dashmap::DashMap;
 use palace_core::NodeId;
 use parking_lot::RwLock;
 use rand::Rng;
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
+use std::sync::Arc;
 
 /// A candidate node with distance, used for min-heap operations
 #[derive(Debug, Clone)]
@@ -39,7 +42,10 @@ impl Ord for Candidate {
 
 /// Navigable Small World graph index
 pub struct NswIndex {
-    nodes: RwLock<HashMap<NodeId, GraphNode>>,
+    /// Sharded concurrent map for writes and direct access
+    nodes: DashMap<NodeId, GraphNode>,
+    /// Immutable snapshot for wait-free reads during high-concurrency reranking
+    read_snapshot: ArcSwap<im::HashMap<NodeId, GraphNode>>,
     max_neighbors: usize,           // M parameter
     ef_construction: usize,         // ef during construction
     ef_search: AtomicUsize,         // ef during search
@@ -57,7 +63,8 @@ impl NswIndex {
     /// * `ef_construction` - Ef parameter during construction (typically 200)
     pub fn new(dimensions: usize, max_neighbors: usize, ef_construction: usize) -> Self {
         NswIndex {
-            nodes: RwLock::new(HashMap::new()),
+            nodes: DashMap::new(),
+            read_snapshot: ArcSwap::from_pointee(im::HashMap::new()),
             max_neighbors,
             ef_construction,
             ef_search: AtomicUsize::new(64), // Default ef for search
@@ -65,6 +72,16 @@ impl NswIndex {
             next_id: AtomicU64::new(0),
             dimensions,
         }
+    }
+
+    /// Publishes a new immutable snapshot of the graph for wait-free reads.
+    /// Should be called after batch insertions to ensure search consistency.
+    pub fn publish_snapshot(&self) {
+        let mut new_map = im::HashMap::new();
+        for entry in self.nodes.iter() {
+            new_map.insert(*entry.key(), entry.value().clone());
+        }
+        self.read_snapshot.store(Arc::new(new_map));
     }
 
     /// Sets the ef parameter for search
@@ -80,22 +97,36 @@ impl NswIndex {
         let node_id = NodeId(id);
         let mut node = GraphNode::new(node_id, vector, metadata);
 
-        let mut nodes_lock = self.nodes.write();
-
-        if nodes_lock.is_empty() {
-            // First node: just insert
-            nodes_lock.insert(node_id, node);
+        if self.nodes.is_empty() {
+            // First node: just insert and publish snapshot
+            self.nodes.insert(node_id, node);
+            self.publish_snapshot();
             return node_id;
         }
 
+        // Search context: use current snapshot for neighborhood search
+        let snapshot = self.read_snapshot.load();
+
+        // If snapshot is empty (race condition), publish and retry
+        if snapshot.is_empty() {
+            self.publish_snapshot();
+            let snapshot = self.read_snapshot.load();
+            if snapshot.is_empty() {
+                // Still empty — just insert without neighbors
+                self.nodes.insert(node_id, node);
+                self.publish_snapshot();
+                return node_id;
+            }
+        }
+
         // Find nearest neighbors for the new node
-        let nearest = self.search_for_insertion(&node, &nodes_lock);
+        let nearest = self.search_for_insertion_internal(&node, &snapshot);
 
         // Select neighbors using heuristic
         let base_vector = &node.vector;
         let mut candidate_vectors = HashMap::new();
         for (cand_id, _) in &nearest {
-            if let Some(cand_node) = nodes_lock.get(cand_id) {
+            if let Some(cand_node) = self.nodes.get(cand_id) {
                 candidate_vectors.insert(*cand_id, cand_node.vector.clone());
             }
         }
@@ -109,61 +140,54 @@ impl NswIndex {
 
         // Reciprocal connections: update neighbors to include this node
         for neighbor_id in &node.neighbors {
-            // First, add the new node and check if pruning is needed
-            let needs_prune = if let Some(neighbor_node) = nodes_lock.get_mut(neighbor_id) {
+            // Take segment lock for individual neighbor
+            if let Some(mut neighbor_node) = self.nodes.get_mut(neighbor_id) {
                 neighbor_node.neighbors.push(node_id);
+
                 if neighbor_node.neighbors.len() > self.max_neighbors {
-                    Some((
-                        neighbor_node.vector.clone(),
-                        neighbor_node.neighbors.clone(),
-                    ))
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
+                    // Pruning needed
+                    let neighbor_vector = neighbor_node.vector.clone();
+                    let neighbor_neighbor_ids = neighbor_node.neighbors.clone();
 
-            // If pruning needed, do read-only lookups without holding mutable borrow
-            if let Some((neighbor_vector, neighbor_neighbor_ids)) = needs_prune {
-                let mut neighbor_candidates = Vec::new();
-                for nid in &neighbor_neighbor_ids {
-                    if let Some(n) = nodes_lock.get(nid) {
-                        let dist = cosine_distance(&neighbor_vector, &n.vector);
-                        neighbor_candidates.push((*nid, dist));
+                    // Release the lock before doing heuristic calculation (can be slow)
+                    drop(neighbor_node);
+
+                    let mut neighbor_candidates = Vec::new();
+                    let mut neighbor_candidate_vectors = HashMap::new();
+
+                    for nid in &neighbor_neighbor_ids {
+                        if let Some(n) = self.nodes.get(nid) {
+                            let dist = cosine_distance(&neighbor_vector, &n.vector);
+                            neighbor_candidates.push((*nid, dist));
+                            neighbor_candidate_vectors.insert(*nid, n.vector.clone());
+                        }
                     }
-                }
 
-                let mut neighbor_candidate_vectors = HashMap::new();
-                for (nid, _) in &neighbor_candidates {
-                    if let Some(n) = nodes_lock.get(nid) {
-                        neighbor_candidate_vectors.insert(*nid, n.vector.clone());
+                    let pruned = select_neighbors_heuristic(
+                        &neighbor_candidates,
+                        &neighbor_vector,
+                        &neighbor_candidate_vectors,
+                        self.max_neighbors,
+                    );
+
+                    // Re-acquire lock to assign
+                    if let Some(mut neighbor_node) = self.nodes.get_mut(neighbor_id) {
+                        neighbor_node.neighbors = pruned;
                     }
-                }
-
-                let pruned = select_neighbors_heuristic(
-                    &neighbor_candidates,
-                    &neighbor_vector,
-                    &neighbor_candidate_vectors,
-                    self.max_neighbors,
-                );
-
-                // Now take mutable borrow again to assign
-                if let Some(neighbor_node) = nodes_lock.get_mut(neighbor_id) {
-                    neighbor_node.neighbors = pruned;
                 }
             }
         }
 
-        nodes_lock.insert(node_id, node);
+        self.nodes.insert(node_id, node);
+        self.publish_snapshot();
         node_id
     }
 
     /// Searches for the nearest neighbors of a node during insertion
-    fn search_for_insertion(
+    fn search_for_insertion_internal(
         &self,
         query_node: &GraphNode,
-        nodes: &HashMap<NodeId, GraphNode>,
+        nodes: &im::HashMap<NodeId, GraphNode>,
     ) -> Vec<(NodeId, f32)> {
         let query_vec = &query_node.vector;
         let mut candidates = BinaryHeap::new();
@@ -258,9 +282,8 @@ impl NswIndex {
         );
 
         let ef = ef.unwrap_or(self.ef_search.load(AtomicOrdering::Relaxed));
-        let nodes = self.nodes.read();
 
-        if nodes.is_empty() {
+        if self.nodes.is_empty() {
             return Vec::new();
         }
 
@@ -274,12 +297,12 @@ impl NswIndex {
                 hub_cache[0]
             } else {
                 let mut rng = rand::thread_rng();
-                let ids: Vec<_> = nodes.keys().copied().collect();
+                let ids: Vec<_> = self.nodes.iter().map(|r| *r.key()).collect();
                 ids[rng.gen_range(0..ids.len())]
             }
         };
 
-        if let Some(entry_node) = nodes.get(&entry_id) {
+        if let Some(entry_node) = self.nodes.get(&entry_id) {
             let dist = cosine_distance(query, &entry_node.vector);
             candidates.push(std::cmp::Reverse(Candidate {
                 id: entry_id,
@@ -307,38 +330,41 @@ impl NswIndex {
 
             let current = candidates.pop().unwrap().0;
 
-            if let Some(current_node) = nodes.get(&current.id) {
-                for neighbor_id in &current_node.neighbors {
-                    if !visited.insert(*neighbor_id) {
-                        continue;
-                    }
+            let neighbor_ids: Vec<NodeId> = self
+                .nodes
+                .get(&current.id)
+                .map(|n| n.neighbors.clone())
+                .unwrap_or_default();
 
-                    if let Some(neighbor_node) = nodes.get(neighbor_id) {
-                        let dist = cosine_distance(query, &neighbor_node.vector);
+            for neighbor_id in neighbor_ids {
+                if !visited.insert(neighbor_id) {
+                    continue;
+                }
 
-                        if dist < w.peek().map(|c| c.distance).unwrap_or(f32::INFINITY)
-                            || w.len() < ef
-                        {
-                            candidates.push(std::cmp::Reverse(Candidate {
-                                id: *neighbor_id,
-                                distance: dist,
-                            }));
+                if let Some(neighbor_node) = self.nodes.get(&neighbor_id) {
+                    let dist = cosine_distance(query, &neighbor_node.vector);
 
-                            w.push(Candidate {
-                                id: *neighbor_id,
-                                distance: dist,
+                    if dist < w.peek().map(|c| c.distance).unwrap_or(f32::INFINITY) || w.len() < ef
+                    {
+                        candidates.push(std::cmp::Reverse(Candidate {
+                            id: neighbor_id,
+                            distance: dist,
+                        }));
+
+                        w.push(Candidate {
+                            id: neighbor_id,
+                            distance: dist,
+                        });
+
+                        if w.len() > ef {
+                            let mut vec: Vec<_> = w.into_iter().collect();
+                            vec.sort_by(|a, b| {
+                                a.distance
+                                    .partial_cmp(&b.distance)
+                                    .unwrap_or(Ordering::Equal)
                             });
-
-                            if w.len() > ef {
-                                let mut vec: Vec<_> = w.into_iter().collect();
-                                vec.sort_by(|a, b| {
-                                    a.distance
-                                        .partial_cmp(&b.distance)
-                                        .unwrap_or(Ordering::Equal)
-                                });
-                                vec.pop();
-                                w = vec.into_iter().collect();
-                            }
+                            vec.pop();
+                            w = vec.into_iter().collect();
                         }
                     }
                 }
@@ -354,9 +380,8 @@ impl NswIndex {
     /// Returns a vector of (NodeId, Hamming distance) tuples
     pub fn search_binary(&self, query_binary: &[u64], ef: Option<usize>) -> Vec<(NodeId, u32)> {
         let ef = ef.unwrap_or(self.ef_search.load(AtomicOrdering::Relaxed));
-        let nodes = self.nodes.read();
 
-        if nodes.is_empty() {
+        if self.nodes.is_empty() {
             return Vec::new();
         }
 
@@ -365,11 +390,11 @@ impl NswIndex {
 
         let entry_id = {
             let mut rng = rand::thread_rng();
-            let ids: Vec<_> = nodes.keys().copied().collect();
+            let ids: Vec<_> = self.nodes.iter().map(|r| *r.key()).collect();
             ids[rng.gen_range(0..ids.len())]
         };
 
-        if let Some(entry_node) = nodes.get(&entry_id) {
+        if let Some(entry_node) = self.nodes.get(&entry_id) {
             let dist = hamming_distance(query_binary, &entry_node.binary);
             candidates.push(std::cmp::Reverse((dist, entry_id)));
             w.push((dist, entry_id));
@@ -387,25 +412,29 @@ impl NswIndex {
 
             let (_, current_id) = candidates.pop().unwrap().0;
 
-            if let Some(current_node) = nodes.get(&current_id) {
-                for neighbor_id in &current_node.neighbors {
-                    if !visited.insert(*neighbor_id) {
-                        continue;
-                    }
+            let neighbor_ids: Vec<NodeId> = self
+                .nodes
+                .get(&current_id)
+                .map(|n| n.neighbors.clone())
+                .unwrap_or_default();
 
-                    if let Some(neighbor_node) = nodes.get(neighbor_id) {
-                        let dist = hamming_distance(query_binary, &neighbor_node.binary);
+            for neighbor_id in neighbor_ids {
+                if !visited.insert(neighbor_id) {
+                    continue;
+                }
 
-                        if dist < w.peek().map(|c| c.0).unwrap_or(u32::MAX) || w.len() < ef {
-                            candidates.push(std::cmp::Reverse((dist, *neighbor_id)));
-                            w.push((dist, *neighbor_id));
+                if let Some(neighbor_node) = self.nodes.get(&neighbor_id) {
+                    let dist = hamming_distance(query_binary, &neighbor_node.binary);
 
-                            if w.len() > ef {
-                                let mut vec: Vec<_> = w.into_iter().collect();
-                                vec.sort_by_key(|a| a.0);
-                                vec.pop();
-                                w = vec.into_iter().collect();
-                            }
+                    if dist < w.peek().map(|c| c.0).unwrap_or(u32::MAX) || w.len() < ef {
+                        candidates.push(std::cmp::Reverse((dist, neighbor_id)));
+                        w.push((dist, neighbor_id));
+
+                        if w.len() > ef {
+                            let mut vec: Vec<_> = w.into_iter().collect();
+                            vec.sort_by_key(|a| a.0);
+                            vec.pop();
+                            w = vec.into_iter().collect();
                         }
                     }
                 }
@@ -420,27 +449,30 @@ impl NswIndex {
     /// Updates hub scores based on neighbor frequency
     /// Higher-scoring nodes appear in many other nodes' neighbor lists
     pub fn update_hub_scores(&self) {
-        let mut nodes = self.nodes.write();
-
         // Count how many times each node appears in other nodes' neighbor lists
         let mut hub_counts: HashMap<NodeId, u32> = HashMap::new();
 
-        for node in nodes.values() {
-            for neighbor_id in &node.neighbors {
+        for entry in self.nodes.iter() {
+            for neighbor_id in &entry.value().neighbors {
                 *hub_counts.entry(*neighbor_id).or_insert(0) += 1;
             }
         }
 
-        // Update hub scores and normalize
+        // Find max count for normalization
         let max_count = *hub_counts.values().max().unwrap_or(&1) as f32;
 
-        for node in nodes.values_mut() {
-            let count = hub_counts.get(&node.id).copied().unwrap_or(0);
-            node.hub_score = count as f32 / max_count;
+        // Update hub scores in DashMap
+        for mut entry in self.nodes.iter_mut() {
+            let count = hub_counts.get(entry.key()).copied().unwrap_or(0);
+            entry.value_mut().hub_score = count as f32 / max_count;
         }
 
         // Update hub cache with top nodes
-        let mut hub_nodes: Vec<_> = nodes.values().map(|n| (n.id, n.hub_score)).collect();
+        let mut hub_nodes: Vec<_> = self
+            .nodes
+            .iter()
+            .map(|n| (*n.key(), n.value().hub_score))
+            .collect();
         hub_nodes.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal));
 
         let mut hub_cache = self.hub_cache.write();
@@ -449,7 +481,7 @@ impl NswIndex {
 
     /// Gets all neighbors within K hops from a node (ego-graph)
     pub fn get_neighbors(&self, id: NodeId, hops: usize) -> HashSet<NodeId> {
-        let nodes = self.nodes.read();
+        let nodes = self.read_snapshot.load();
 
         if !nodes.contains_key(&id) {
             return HashSet::new();
@@ -483,22 +515,21 @@ impl NswIndex {
 
     /// Removes a node from the index and repairs connections
     pub fn remove(&self, id: NodeId) -> bool {
-        let mut nodes = self.nodes.write();
-
-        if nodes.remove(&id).is_none() {
+        if self.nodes.remove(&id).is_none() {
             return false;
         }
 
         // Find all neighbors of the removed node
-        let neighbors_to_repair: Vec<NodeId> = nodes
-            .values()
-            .filter(|n| n.neighbors.contains(&id))
-            .map(|n| n.id)
+        let neighbors_to_repair: Vec<NodeId> = self
+            .nodes
+            .iter()
+            .filter(|n| n.value().neighbors.contains(&id))
+            .map(|n| *n.key())
             .collect();
 
         // Repair connections: connect neighbors to each other
         for neighbor_id in &neighbors_to_repair {
-            if let Some(neighbor_node) = nodes.get_mut(neighbor_id) {
+            if let Some(mut neighbor_node) = self.nodes.get_mut(neighbor_id) {
                 // Remove reference to deleted node
                 neighbor_node.neighbors.retain(|&nid| nid != id);
 
@@ -519,17 +550,17 @@ impl NswIndex {
 
     /// Returns the number of nodes in the index
     pub fn len(&self) -> usize {
-        self.nodes.read().len()
+        self.nodes.len()
     }
 
     /// Checks if the index is empty
     pub fn is_empty(&self) -> bool {
-        self.nodes.read().is_empty()
+        self.nodes.is_empty()
     }
 
     /// Returns a copy of a node by ID
     pub fn get_node(&self, id: NodeId) -> Option<GraphNode> {
-        self.nodes.read().get(&id).cloned()
+        self.nodes.get(&id).map(|entry| entry.value().clone())
     }
 }
 

@@ -9,6 +9,7 @@ members = [
     "crates/palace-storage",
     "crates/palace-engine",
     "crates/palace-bench",
+    "crates/palace-optimizer",
 ]
 
 [workspace.package]
@@ -29,6 +30,7 @@ palace-topo = { path = "crates/palace-topo" }
 palace-bitplane = { path = "crates/palace-bitplane" }
 palace-storage = { path = "crates/palace-storage" }
 palace-engine = { path = "crates/palace-engine" }
+palace-optimizer = { path = "crates/palace-optimizer" }
 
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
@@ -38,6 +40,9 @@ parking_lot = "0.12"
 tracing = "0.1"
 async-trait = "0.1"
 rayon = "1.10"
+dashmap = "6"
+arc-swap = "1"
+im = "15"
 
 [profile.release]
 opt-level = 3

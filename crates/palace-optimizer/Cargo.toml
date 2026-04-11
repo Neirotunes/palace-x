@@ -1,0 +1,27 @@
+[package]
+name = "palace-optimizer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Silicon-Native Game Optimizer for Apple M1/M2/M3 (DARPA-Grade Architecture)"
+
+[dependencies]
+libc = "0.2"
+rayon = { workspace = true }
+bumpalo = "3.16"
+core-foundation = "0.9"
+metal = "0.29"
+objc = "0.2"
+crossbeam = "0.8"
+log = "0.4"
+mach2 = "0.4"
+# For NEON intrinsics we use std::arch::aarch64
+
+[dev-dependencies]
+rand = { workspace = true }
+
+[lib]
+name = "palace_optimizer"
+path = "src/lib.rs"

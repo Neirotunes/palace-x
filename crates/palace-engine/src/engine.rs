@@ -73,6 +73,21 @@ impl PalaceEngine {
     ) {
         debug!("PalaceEngine actor task started");
 
+        #[cfg(target_arch = "aarch64")]
+        let prefetcher = palace_optimizer::SpeculativePrefetcher::new();
+
+        // Silicon-Native Optimization: Pin this core actor task to Firestorm P-cores
+        #[cfg(target_arch = "aarch64")]
+        {
+            use palace_optimizer::{pin_current_thread, set_thread_qos, CoreType, QosClass};
+            if let Err(e) = pin_current_thread(CoreType::Performance) {
+                tracing::warn!("Failed to pin PalaceEngine to P-core: error {}", e);
+            } else {
+                info!("PalaceEngine pinned to Firestorm P-core successfully");
+            }
+            set_thread_qos(QosClass::UserInteractive);
+        }
+
         while let Some(cmd) = rx.recv().await {
             match cmd {
                 Command::Ingest {
@@ -91,6 +106,28 @@ impl PalaceEngine {
                 } => {
                     debug!("Processing Search command with limit={}", config.limit);
                     let result = palace.retrieve(&query, &config).await;
+
+                    // Silicon-Native Optimization: Speculative Prefetching
+                    #[cfg(target_arch = "aarch64")]
+                    if let Ok(ref fragments) = result {
+                        if let Some(top_fragment) = fragments.first() {
+                            let node_id = top_fragment.node_id.0;
+
+                            // If we have a prediction for what the user might search next,
+                            // prefetch that vector's memory into L1/L2 cache now.
+                            if let Some(predicted_id) = prefetcher.predict_next(node_id) {
+                                if let Some(ptr) =
+                                    palace.get_vector_ptr(palace_core::NodeId(predicted_id))
+                                {
+                                    prefetcher.prefetch_predicted(predicted_id, ptr as *const u8);
+                                }
+                            }
+
+                            // Learn the pattern: current node was matched
+                            prefetcher.record_access(node_id);
+                        }
+                    }
+
                     let _ = reply.send(result);
                 }
                 Command::Vacuum { nodes, reply } => {

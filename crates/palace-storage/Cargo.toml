@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 palace-core = { workspace = true }
+palace-optimizer = { workspace = true }
 palace-quant = { workspace = true }
 palace-graph = { workspace = true }
 palace-topo = { workspace = true }

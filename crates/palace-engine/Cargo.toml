@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 palace-core = { workspace = true }
 palace-storage = { workspace = true }
+palace-optimizer = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 serde = { workspace = true }

@@ -12,6 +12,9 @@ palace-quant = { workspace = true }
 parking_lot = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true }
+dashmap = { workspace = true }
+arc-swap = { workspace = true }
+im = { workspace = true }
 
 [dev-dependencies]
 rand = { workspace = true }

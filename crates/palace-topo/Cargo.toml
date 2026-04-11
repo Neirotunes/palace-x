@@ -11,6 +11,7 @@ palace-core = { workspace = true }
 palace-quant = { workspace = true }
 rayon = { workspace = true }
 parking_lot = { workspace = true }
+dashmap = { workspace = true }
 
 [dev-dependencies]
 rand = { workspace = true }
