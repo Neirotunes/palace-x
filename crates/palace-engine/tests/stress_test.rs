@@ -1,3 +1,6 @@
+// Copyright (c) 2026 M.Diach <max@neirosynth.com>
+// Proprietary — All Rights Reserved
+
 //! Concurrency stress tests for palace-engine
 //!
 //! Tests cover:

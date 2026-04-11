@@ -1,3 +1,6 @@
+// Copyright (c) 2026 M.Diach <max@neirosynth.com>
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Integration tests verifying correctness and correlation between metrics
 #![allow(clippy::useless_vec)]
 

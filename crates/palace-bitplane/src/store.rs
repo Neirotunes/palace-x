@@ -1,3 +1,6 @@
+// Copyright (c) 2026 M.Diach <max@neirosynth.com>
+// Proprietary — All Rights Reserved
+
 //! Tiered storage abstraction for bit-plane vectors.
 //!
 //! Manages vectors across RAM (coarse planes) and disk-tier (fine planes).

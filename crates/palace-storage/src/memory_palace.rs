@@ -1,3 +1,6 @@
+// Copyright (c) 2026 M.Diach <max@neirosynth.com>
+// Proprietary — All Rights Reserved
+
 //! Core MemoryProvider implementation: MemoryPalace
 //!
 //! Integrates NSW index, topological reranking, and bit-plane storage into a complete

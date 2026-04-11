@@ -1,3 +1,6 @@
+// Copyright (c) 2026 M.Diach <max@neirosynth.com>
+// Proprietary — All Rights Reserved
+
 use bumpalo::Bump;
 use std::sync::atomic::{AtomicUsize, Ordering};
 

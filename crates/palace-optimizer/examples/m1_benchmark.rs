@@ -1,3 +1,6 @@
+// Copyright (c) 2026 M.Diach <max@neirosynth.com>
+// Proprietary — All Rights Reserved
+
 use palace_optimizer::*;
 use std::time::Instant;
 

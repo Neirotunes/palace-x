@@ -1,3 +1,6 @@
+// Copyright (c) 2026 M.Diach <max@neirosynth.com>
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! palace-topo: Topological reranking module for the Palace-X project
 //!
 //! Implements the normalized Betti number β₁ metric for semantic structure-aware retrieval.

@@ -1,0 +1,15 @@
+Palace-X Pro — Silicon-Native Memory Engine
+Copyright (c) 2026 M.Diach <max@neirosynth.com>
+Proprietary — All Rights Reserved
+
+This software is confidential and proprietary.
+Unauthorized copying, distribution, or use is strictly prohibited.
+
+Contains trade secrets including but not limited to:
+- UMA zero-copy arena allocator
+- Mach kernel thread affinity optimization
+- Metal GPU batch search
+- Bit-plane disaggregation (TRACE)
+- Speculative prefetch with Markov prediction
+
+Original author: M.Diach (Neirotunes)

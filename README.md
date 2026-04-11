@@ -1,5 +1,7 @@
 # Palace-X (Silicon-Native)
 
+> Copyright (c) 2026 M.Diach — Proprietary. All Rights Reserved.
+
 **High-performance Silicon-Native memory system for autonomous AI agents on Apple M-series hardware.**
 
 Palace-X transforms the "memory palace" metaphor into a deterministic, hardware-native engineering construct. Optimized for Apple Silicon (M1/M2/M3), it replaces LLM-in-the-loop classification with **NEON-accelerated** topological distillation and binary quantization. By saturating the **Firestorm P-cores** and leveraging **UMA Zero-Copy Arenas**, it achieves sub-10ms latency for million-node search operations.

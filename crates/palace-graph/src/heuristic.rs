@@ -1,3 +1,6 @@
+// Copyright (c) 2026 M.Diach <max@neirosynth.com>
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Neighbor selection heuristic for maintaining diverse NSW edges
 
 use crate::node::cosine_distance;

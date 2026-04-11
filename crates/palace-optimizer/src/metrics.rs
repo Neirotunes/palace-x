@@ -1,3 +1,6 @@
+// Copyright (c) 2026 M.Diach <max@neirosynth.com>
+// Proprietary — All Rights Reserved
+
 #[cfg(target_arch = "aarch64")]
 pub mod timing {
     pub struct MachTimer {

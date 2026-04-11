@@ -1,3 +1,6 @@
+// Copyright (c) 2026 M.Diach <max@neirosynth.com>
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! RaBitQ: Randomized Binary Quantization with theoretical error bounds.
 //!
 //! Implements the RaBitQ algorithm (Gao & Long, SIGMOD 2024) which dramatically

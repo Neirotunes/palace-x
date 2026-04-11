@@ -1,3 +1,6 @@
+// Copyright (c) 2026 M.Diach <max@neirosynth.com>
+// Proprietary — All Rights Reserved
+
 //! Graceful degradation for precision-aware retrieval.
 //!
 //! Defines precision levels and tracks confidence in retrieved results

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 M.Diach <max@neirosynth.com>
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Fast cosine distance computation for f32 vectors.
 //!
 //! Computes cosine distance as 1.0 - cosine_similarity, where:

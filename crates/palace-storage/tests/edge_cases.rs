@@ -1,3 +1,6 @@
+// Copyright (c) 2026 M.Diach <max@neirosynth.com>
+// Proprietary — All Rights Reserved
+
 //! Edge case and fuzz tests for MemoryPalace.
 //!
 //! Validates correct behavior with extreme, degenerate, and boundary-condition inputs.

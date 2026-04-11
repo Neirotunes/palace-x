@@ -1,3 +1,6 @@
+// Copyright (c) 2026 M.Diach <max@neirosynth.com>
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Palace-X topological distance metric (d_total).
 //!
 //! Combines cosine distance with structural connectivity analysis via the first Betti number.

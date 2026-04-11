@@ -1,3 +1,6 @@
+// Copyright (c) 2026 M.Diach <max@neirosynth.com>
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Palace Graph: Navigable Small World (NSW) index with Hub-Highway optimization
 //!
 //! This crate implements a flat NSW approach from the paper "Down with the Hierarchy"

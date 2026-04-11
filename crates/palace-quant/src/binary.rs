@@ -1,3 +1,6 @@
+// Copyright (c) 2026 M.Diach <max@neirosynth.com>
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Binary quantization: converts f32 vectors to packed u64 bit vectors.
 //!
 //! Each dimension is quantized to a single bit based on whether it exceeds a threshold (0.0).

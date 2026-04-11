@@ -1,3 +1,6 @@
+// Copyright (c) 2026 M.Diach <max@neirosynth.com>
+// Proprietary — All Rights Reserved
+
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// ThermalGuard monitors the system's thermal state and preemptively throttles

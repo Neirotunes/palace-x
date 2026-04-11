@@ -1,3 +1,6 @@
+// Copyright (c) 2026 M.Diach <max@neirosynth.com>
+// Proprietary — All Rights Reserved
+
 //! Core engine implementation
 //!
 //! PalaceEngine wraps MemoryPalace in an async actor pattern for safe concurrent access.

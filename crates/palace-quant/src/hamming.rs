@@ -1,3 +1,6 @@
+// Copyright (c) 2026 M.Diach <max@neirosynth.com>
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Hamming distance computation with multiple backends and runtime feature detection.
 //!
 //! Provides scalar, AVX-512, NEON, and auto-detecting backends for maximum performance.

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 M.Diach <max@neirosynth.com>
+// Proprietary — All Rights Reserved
+
 //! Batch operations for efficient concurrent ingestion
 //!
 //! Provides helpers for ingesting multiple vectors concurrently.

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 M.Diach <max@neirosynth.com>
+// Proprietary — All Rights Reserved
+
 //! Actor message types and command routing
 //!
 //! Defines the command protocol for communicating with the PalaceEngine actor.

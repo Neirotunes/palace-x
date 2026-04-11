@@ -1,3 +1,6 @@
+// Copyright (c) 2026 M.Diach <max@neirosynth.com>
+// Proprietary — All Rights Reserved
+
 //! # Silicon-Native Game Optimizer
 //!
 //! DARPA-grade architectural optimizations for Apple Silicon (M1/M2/M3).

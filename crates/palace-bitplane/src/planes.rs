@@ -1,3 +1,6 @@
+// Copyright (c) 2026 M.Diach <max@neirosynth.com>
+// Proprietary — All Rights Reserved
+
 //! Bit-plane decomposition for f32 vectors.
 //!
 //! IEEE 754 f32 layout: [sign (1 bit) | exponent (8 bits) | mantissa (23 bits)]

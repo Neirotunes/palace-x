@@ -1,3 +1,6 @@
+// Copyright (c) 2026 M.Diach <max@neirosynth.com>
+// Proprietary — All Rights Reserved
+
 //! Statistics and diagnostics for MemoryPalace.
 //!
 //! Provides introspection into the index structure, memory usage,
