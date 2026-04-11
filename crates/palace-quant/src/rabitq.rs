@@ -29,7 +29,6 @@
 //!    to estimate squared Euclidean distance
 
 use crate::binary::quantize_binary;
-use crate::hamming::hamming_distance;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
@@ -118,12 +117,13 @@ fn fast_hadamard_transform(v: &mut [f32]) {
 /// Per-vector scalar factors stored alongside the binary code.
 #[derive(Clone, Debug)]
 pub struct RaBitQFactors {
-    /// ||o - centroid||^2
+    /// ||o - centroid||²
     pub sqr_norm: f32,
-    /// -2/sqrt(D) * (||o-c|| / x0)
-    pub factor_ip: f32,
-    /// factor_ip * (2*popcount - D)
-    pub factor_ppc: f32,
+    /// ||o - centroid||
+    pub norm: f32,
+    /// Quantization quality: ⟨x', x_bar⟩ / √D  where x' is the rotated
+    /// normalized residual and x_bar = sign(x') ∈ {-1,+1}^D.
+    pub x0: f32,
     /// Error bound factor for this vector
     pub error_bound: f32,
 }
@@ -160,6 +160,21 @@ impl RaBitQIndex {
             centroid: vec![0.0; dim],
             dim,
         }
+    }
+
+    /// Update the centroid of the index using a representative sample of vectors.
+    pub fn update_centroid(&mut self, samples: &[Vec<f32>]) {
+        if samples.is_empty() { return; }
+        let mut new_centroid = vec![0.0; self.dim];
+        for s in samples {
+            for (i, v) in s.iter().enumerate() {
+                new_centroid[i] += v;
+            }
+        }
+        for i in 0..self.dim {
+            new_centroid[i] /= samples.len() as f32;
+        }
+        self.centroid = new_centroid;
     }
 
     /// Create a new RaBitQ index with a precomputed centroid.
@@ -229,16 +244,12 @@ impl RaBitQIndex {
             // To maintain RaBitQ properties, we should ideally use a randomized
             // or well-distributed quantization. For now, we'll use linear quant.
             let mut quantized = vec![0u8; self.dim];
-            let num_levels = (1 << bits) as f32 - 1.0;
             
-            // We use the range of the rotated vector for quantization
-            // Note: In a real production system, we'd use a fixed range based on dim
-            let min_v = rotated.iter().cloned().fold(f32::INFINITY, f32::min);
-            let max_v = rotated.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-            let range = (max_v - min_v).max(1e-10);
-
             for i in 0..self.dim {
-                quantized[i] = (((rotated[i] - min_v) / range) * num_levels).round().clamp(0.0, num_levels) as u8;
+                // Centered quantization for RaBitQ
+                // We map [-range, range] to [0, 15], centered at 0.0 mapping to 7.5
+                let val = (rotated[i] * 10.0).clamp(-7.5, 7.5);
+                quantized[i] = (val + 7.5).round() as u8;
             }
 
             // Extract bit-planes
@@ -247,9 +258,7 @@ impl RaBitQIndex {
                 for i in 0..self.dim {
                     let bit = (quantized[i] >> b) & 1;
                     if bit == 1 {
-                        let word_idx = i / 64;
-                        let bit_idx = i % 64;
-                        plane[word_idx] |= 1u64 << (63 - bit_idx);
+                        plane[i / 64] |= 1u64 << (i % 64);
                     }
                 }
                 binary.extend(plane);
@@ -268,36 +277,32 @@ impl RaBitQIndex {
             &binary[msb_plane_idx..msb_plane_idx + words_per_plane]
         };
 
+        // Compute quantization quality x0 = ⟨x', x_bar⟩ / √D
         let d = self.dim as f32;
-        let sqrt_d = d.sqrt();
-        let mut x0: f32 = 0.0;
+        let mut dot_x_xbar: f32 = 0.0;
         for i in 0..self.dim {
-            let word_idx = i / 64;
-            let bit_idx = i % 64;
-            let bit = (sign_bits[word_idx] >> (63 - bit_idx)) & 1;
-            let sign = if bit == 1 { 1.0 } else { -1.0 };
-            x0 += sign * rotated[i];
+            let bit = (sign_bits[i / 64] >> (i % 64)) & 1;
+            let sign = if bit == 1 { 1.0f32 } else { -1.0f32 };
+            dot_x_xbar += sign * rotated[i];
         }
-        x0 /= sqrt_d;
-
+        let x0 = dot_x_xbar / d.sqrt();
+        // Clamp x0 away from zero (degenerate vectors)
         let x0 = if x0 > 1e-6 { x0 } else { 0.8 };
-        let pc: u32 = sign_bits.iter().map(|w| w.count_ones()).sum();
 
-        let x_x0 = norm / x0;
-        let factor_ip = -2.0 / sqrt_d * x_x0;
-        let factor_ppc = factor_ip * (2.0 * pc as f32 - d);
-
+        // Error bound: ε ≈ 2·ε₀·||o-c||·√(1/x0² - 1) / √(D-1)
         let epsilon_0 = 1.9;
-        let inner = (x_x0 * x_x0 - sqr_norm).max(0.0);
-        let error_bound = 2.0 * epsilon_0 / ((self.dim - 1).max(1) as f32).sqrt() * inner.sqrt();
+        let inv_x0_sq_minus_1 = (1.0 / (x0 * x0) - 1.0).max(0.0);
+        let error_bound = 2.0 * epsilon_0 * norm
+            * inv_x0_sq_minus_1.sqrt()
+            / ((self.dim - 1).max(1) as f32).sqrt();
 
         RaBitQCode {
             binary,
             bits,
             factors: RaBitQFactors {
                 sqr_norm,
-                factor_ip,
-                factor_ppc,
+                norm,
+                x0,
                 error_bound,
             },
         }
@@ -305,50 +310,25 @@ impl RaBitQIndex {
 
     /// Prepare a query for distance estimation against encoded vectors.
     ///
-    /// Returns a `RaBitQQuery` that can be used with `estimate_distance`.
+    /// The query residual is rotated WITHOUT normalization — the magnitude
+    /// must be preserved for correct asymmetric distance estimation.
     pub fn encode_query(&self, query: &[f32]) -> RaBitQQuery {
         debug_assert_eq!(query.len(), self.dim);
 
-        // Residual from centroid (NOT normalized — keep magnitude)
         let residual: Vec<f32> = query
             .iter()
             .zip(self.centroid.iter())
             .map(|(v, c)| v - c)
             .collect();
 
-        let q_norm = l2_norm(&residual);
-        let sqr_y = q_norm * q_norm;
+        let sqr_y: f32 = residual.iter().map(|x| x * x).sum();
+        let q_norm = sqr_y.sqrt();
 
-        // Rotate query
-        let rotated = self.rotation.rotate(&residual);
-
-        // Scalar-quantize rotated query to 4 bits for asymmetric comparison
-        let vl = rotated.iter().cloned().fold(f32::INFINITY, f32::min);
-        let vr = rotated.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-
-        let num_levels = 15.0f32; // 4-bit: 0..15
-        let width = if (vr - vl).abs() > 1e-10 {
-            (vr - vl) / num_levels
-        } else {
-            1.0
-        };
-
-        let quantized: Vec<u8> = rotated
-            .iter()
-            .map(|&v| ((v - vl) / width).round().clamp(0.0, num_levels) as u8)
-            .collect();
-
-        let sumq: u32 = quantized.iter().map(|&v| v as u32).sum();
-
-        // Also create binary version of query for fast 1-bit path
-        let query_binary = quantize_binary(&rotated);
+        // Rotate the raw residual — do NOT normalize
+        let rotated_vector = self.rotation.rotate(&residual);
 
         RaBitQQuery {
-            query_binary,
-            quantized,
-            sumq,
-            vl,
-            width,
+            rotated_vector,
             sqr_y,
             q_norm,
         }
@@ -357,118 +337,72 @@ impl RaBitQIndex {
     /// Estimate squared Euclidean distance between a query and an encoded vector.
     ///
     /// Uses the RaBitQ asymmetric distance estimation:
-    /// ||o - q||^2 ≈ ||o-c||^2 + ||q-c||^2 - 2 * (||o-c|| / x0) * <x_bar, q'>
     ///
-    /// where <x_bar, q'> is estimated via the asymmetric byte-bin inner product.
+    /// ```text
+    /// ⟨o-c, q-c⟩ ≈ ||o-c|| · (x0/√D) · ⟨x_bar, q'⟩
+    /// ||o - q||²  ≈ ||o-c||² + ||q-c||² - 2·||o-c||·(x0/√D)·⟨x_bar, q'⟩
+    /// ```
+    ///
+    /// where q' = P^T·(q-c) is the rotated RAW query residual (not normalized),
+    /// and x_bar ∈ {-1,+1}^D is the sign-bit quantization of the rotated
+    /// normalized database vector.
     ///
     /// Returns (estimated_distance, lower_bound_distance).
     #[inline]
     pub fn estimate_distance(&self, query: &RaBitQQuery, code: &RaBitQCode) -> (f32, f32) {
-        // Inner product between quantized query and multi-bit planes:
-        // ip = sum_b=0..bits-1 2^b * sum_i q[i] * bit_i_b(code)
+        let d = self.dim as f32;
         let words_per_plane = (self.dim + 63) / 64;
-        let mut ip: f32 = 0.0;
 
-        for b in 0..code.bits {
-            let start = b as usize * words_per_plane;
-            let plane = &code.binary[start..start + words_per_plane];
-            let plane_ip = inner_product_byte_bin(&query.quantized, plane, self.dim);
-            ip += (1 << b) as f32 * plane_ip as f32;
+        // Select sign bits (MSB plane for multi-bit encoding)
+        let msb_plane_idx = if code.bits == 1 {
+            0
+        } else {
+            (code.bits - 1) as usize * words_per_plane
+        };
+        let sign_bits = &code.binary[msb_plane_idx..msb_plane_idx + words_per_plane];
+
+        // Compute ⟨x_bar, q'⟩ — inner product of sign-quantized database
+        // vector with the rotated raw query residual
+        let mut x_dot_q: f32 = 0.0;
+        for i in 0..self.dim {
+            let bit = (sign_bits[i / 64] >> (i % 64)) & 1;
+            let val = query.rotated_vector[i];
+            if bit == 1 {
+                x_dot_q += val;
+            } else {
+                x_dot_q -= val;
+            }
         }
 
-        // Reconstruct <x_bar, q'> from quantized values:
-        // Here we need to adjust for the fact that code has multiple bits.
-        // Actually, RaBitQ usually keeps the same IP structure.
-        let d = self.dim as f32;
-        let sqrt_d = d.sqrt();
-        
-        // Use MSB plane for popcount factor if needed, or total sum.
-        // For simplicity and to match the 'x0' logic, we use msb plane pc.
-        let msb_plane_idx = (code.bits - 1) as usize * words_per_plane;
-        let sign_bits = &code.binary[msb_plane_idx..msb_plane_idx + words_per_plane];
-        let pc: u32 = sign_bits.iter().map(|w| w.count_ones()).sum();
+        // Estimate the real inner product ⟨o-c, q-c⟩:
+        //   ⟨o-c, q-c⟩ = ||o-c|| · ⟨x_hat, q-c⟩
+        //               = ||o-c|| · ⟨x', q'⟩              (rotation preserves IP)
+        //
+        // RaBitQ reconstruction (Gao & Long, 2024):
+        //   ⟨x', q'⟩ ≈ (1 / (x0·√D)) · ⟨x_bar, q'⟩
+        //
+        // This gives an unbiased estimate for self-distance (exactly 0) and
+        // preserves ranking fidelity for cross-vector distances.
+        let est_inner_product =
+            code.factors.norm / (code.factors.x0 * d.sqrt()) * x_dot_q;
 
-        // <x_bar, q'> estimate when data has multiple bits:
-        // This is a bit more complex. Let's use a simpler version:
-        // Reconstruct the actual inner product <o', q'> directly if bits > 1.
-        
-        // Wait, the user prompt said: "query залишається 4-bit, data 4-bit → popcount по bit-planes"
-        // So we estimate <o-c, q-c> = <rotated_o, query_r>
-        // <rotated_o, query_r> ≈ sum_i (quant_o[i] * quantized_q[i] * scales)
-        
-        // Let's implement the reconstruction properly.
-        let xbar_dot_qprime = (query.vl * (2.0 * pc as f32 - d)
-            + query.width * (2.0 * ip as f32 - query.sumq as f32))
-            / sqrt_d;
-
-        let norm_over_x0 = (-code.factors.factor_ip * sqrt_d) / 2.0;
-        let est_ip = norm_over_x0 * xbar_dot_qprime;
-
-        let est_dist = code.factors.sqr_norm + query.sqr_y - 2.0 * est_ip;
-        let error = query.q_norm * code.factors.error_bound;
-        let lower_bound = est_dist - error;
+        let est_dist = code.factors.sqr_norm + query.sqr_y - 2.0 * est_inner_product;
+        let lower_bound = est_dist - code.factors.error_bound * query.q_norm;
 
         (est_dist.max(0.0), lower_bound)
     }
-
-    /// Fast 1-bit symmetric distance using Hamming distance.
-    /// Less accurate than asymmetric but uses existing SIMD kernels directly.
-    ///
-    /// Returns estimated squared Euclidean distance.
-    #[inline]
-    pub fn estimate_distance_symmetric(&self, query: &RaBitQQuery, code: &RaBitQCode) -> f32 {
-        let hamming = hamming_distance(&query.query_binary, &code.binary);
-        let d = self.dim as f32;
-
-        // RaBitQ symmetric: d_est = sqr_norm + sqr_y + factor_ppc * 0
-        //   + (D - 2*hamming) * factor_ip * 1  (simplified for binary query)
-        // But with proper correction:
-        let matching_bits = d as u32 - hamming;
-        let ip_proxy = 2.0 * matching_bits as f32 - d;
-
-        code.factors.sqr_norm + query.sqr_y + code.factors.factor_ip * ip_proxy / d.sqrt()
-    }
 }
+
 
 /// Prepared query for RaBitQ distance estimation.
 #[derive(Clone, Debug)]
 pub struct RaBitQQuery {
-    /// Binary quantization of rotated query (for symmetric/Hamming path)
-    pub query_binary: Vec<u64>,
-    /// 4-bit scalar quantization of rotated query
-    pub quantized: Vec<u8>,
-    /// Sum of quantized values
-    pub sumq: u32,
-    /// Quantization range minimum
-    pub vl: f32,
-    /// Quantization step width
-    pub width: f32,
+    /// Full rotated query vector (for high-precision asymmetric path)
+    pub rotated_vector: Vec<f32>,
     /// ||query - centroid||^2
     pub sqr_y: f32,
     /// ||query - centroid||
     pub q_norm: f32,
-}
-
-/// Compute inner product between scalar-quantized query and binary code.
-///
-/// Returns sum_i quantized[i] * bit_i(binary_code)
-/// This is the core asymmetric kernel of RaBitQ.
-#[inline]
-fn inner_product_byte_bin(q: &[u8], d_bin: &[u64], dim: usize) -> u32 {
-    let mut result: u32 = 0;
-    let words = (dim + 63) / 64;
-
-    for w in 0..words {
-        let d_word = d_bin[w];
-        let base = w * 64;
-        let end = (base + 64).min(dim);
-        for i in base..end {
-            let bit_idx = i - base;
-            let d_bit = (d_word >> (63 - bit_idx)) & 1;
-            result += q[i] as u32 * d_bit as u32;
-        }
-    }
-    result
 }
 
 /// Compute L2 norm of a vector.
@@ -515,6 +449,7 @@ pub fn rabitq_topk(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hamming::hamming_distance;
 
     #[test]
     fn test_fast_hadamard_transform() {
@@ -557,10 +492,11 @@ mod tests {
         // Binary code should have correct length
         assert_eq!(code.binary.len(), 1); // 64/64 = 1 u64
 
-        // Factors should be finite
+        // Factors should be finite and valid
         assert!(code.factors.sqr_norm.is_finite());
-        assert!(code.factors.factor_ip.is_finite());
-        assert!(code.factors.factor_ppc.is_finite());
+        assert!(code.factors.norm.is_finite());
+        assert!(code.factors.x0.is_finite());
+        assert!(code.factors.x0 > 0.0, "x0 should be positive");
     }
 
     #[test]
@@ -633,20 +569,6 @@ mod tests {
             "Expected vector 50 in top-10, got {:?}",
             results.iter().map(|(idx, _)| *idx).collect::<Vec<_>>()
         );
-    }
-
-    #[test]
-    fn test_inner_product_byte_bin() {
-        // All bits set, all query values = 1
-        let q = vec![1u8; 64];
-        let d_bin = vec![u64::MAX]; // all 64 bits set
-        let ip = inner_product_byte_bin(&q, &d_bin, 64);
-        assert_eq!(ip, 64); // 1 * 1 for each of 64 dimensions
-
-        // No bits set
-        let d_bin_zero = vec![0u64];
-        let ip_zero = inner_product_byte_bin(&q, &d_bin_zero, 64);
-        assert_eq!(ip_zero, 0);
     }
 
     #[test]

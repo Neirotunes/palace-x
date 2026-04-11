@@ -289,18 +289,20 @@ fn bench_sift(limit: Option<usize>) {
 
     println!("  Data: {} base vectors, {} queries", n_base, query_vectors.len());
 
-    // 2. Setup Index
-    let nsw_1bit = NswIndex::new(dims, 32, 200);
-    let nsw_4bit = NswIndex::with_alpha(dims, 32, 200, 1.2);
+    // 2. Setup Index — use L2 metric to match SIFT ground truth
+    let nsw_l2 = NswIndex::with_l2(dims, 32, 200);
+    let nsw_l2_alpha = NswIndex::with_l2(dims, 32, 200); // same but for second test
 
-    let rq_index = palace_quant::rabitq::RaBitQIndex::new(dims, 42);
+    let mut rq_index = palace_quant::rabitq::RaBitQIndex::new(dims, 42);
+    rq_index.update_centroid(&base_vectors.to_vec());
+
     let mut codes_1bit = Vec::new();
     let mut codes_4bit = Vec::new();
 
     println!("  Building indices...");
     for (i, v) in base_vectors.iter().enumerate() {
-        nsw_1bit.insert(v.clone(), GraphMetaData { label: format!("{}", i) });
-        nsw_4bit.insert(v.clone(), GraphMetaData { label: format!("{}", i) });
+        nsw_l2.insert(v.clone(), GraphMetaData { label: format!("{}", i) });
+        nsw_l2_alpha.insert(v.clone(), GraphMetaData { label: format!("{}", i) });
         codes_1bit.push(rq_index.encode_multibit(v, 1));
         codes_4bit.push(rq_index.encode_multibit(v, 4));
     }
@@ -317,6 +319,10 @@ fn bench_sift(limit: Option<usize>) {
         for (i, query_vec) in query_vectors.iter().enumerate() {
             let results = f(query_vec);
             let gt = &ground_truth[i];
+
+            if i == 0 {
+                println!("      Debug ({}): Top-5 Results: {:?}, GT: {:?}", name, &results[..5.min(results.len())], &gt[..5]);
+            }
 
             if !results.is_empty() && results[0] == gt[0] as usize {
                 recall_1 += 1.0;
@@ -338,6 +344,17 @@ fn bench_sift(limit: Option<usize>) {
         );
     };
 
+    // Baseline: Brute Force L2
+    run_bench("Float L2 (BF)", &|q: &[f32]| {
+        let mut dists: Vec<(usize, f32)> = base_vectors.iter().enumerate()
+            .map(|(i, v)| {
+                let d: f32 = v.iter().zip(q.iter()).map(|(a, b)| (a - b) * (a - b)).sum();
+                (i, d)
+            }).collect();
+        dists.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        dists.iter().take(10).map(|(id, _)| *id).collect()
+    }, "D×4 B");
+
     // Baseline: RaBitQ Brute Force (Asymmetric)
     run_bench("RaBitQ 1-bit (BF)", &|q| {
         let rq = rq_index.encode_query(q);
@@ -351,16 +368,16 @@ fn bench_sift(limit: Option<usize>) {
         res.into_iter().map(|(id, _)| id).collect()
     }, "D/2 + 16B");
 
-    // NSW Search
-    run_bench("palace-x (1-bit + NSW)", &|q| {
-        let res = nsw_1bit.search(q, Some(64));
+    // NSW Search (L2 distance — matches SIFT ground truth)
+    run_bench("NSW L2 (ef=64)", &|q| {
+        let res = nsw_l2.search(q, Some(64));
         res.into_iter().map(|(id, _)| id.0 as usize).collect()
-    }, "Classic");
+    }, "D×4+graph");
 
-    run_bench("palace-x (4-bit + NSW)", &|q| {
-        let res = nsw_4bit.search(q, Some(64));
+    run_bench("NSW L2 (ef=128)", &|q| {
+        let res = nsw_l2_alpha.search(q, Some(128));
         res.into_iter().map(|(id, _)| id.0 as usize).collect()
-    }, "Vamana α=1.2");
+    }, "D×4+graph");
 }
 
 fn bench_full_pipeline(dims: usize, n_vectors: usize) {
@@ -463,38 +480,48 @@ fn bench_full_pipeline(dims: usize, n_vectors: usize) {
 // ─── Main ──────────────────────────────────────────────────────────
 
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    let sift_only = args.iter().any(|a| a == "--sift" || a == "sift");
+
     println!("╔══════════════════════════════════════════════════════╗");
     println!("║       Palace-X Benchmark Suite v0.1.0               ║");
     println!("║       Topological Memory for Autonomous Agents      ║");
     println!("╚══════════════════════════════════════════════════════╝");
 
-    let dims = 384; // all-MiniLM-L6-v2 dimension
+    if !sift_only {
+        let dims = 384; // all-MiniLM-L6-v2 dimension
 
-    bench_quantization(dims);
-    bench_hamming(dims);
-    bench_cosine(dims);
-    bench_batch_hamming(dims, 10_000);
-    bench_nsw_index(dims, 5_000);
-    bench_topology(dims, 1_000);
-    bench_bitplane(dims);
-    bench_sift(Some(1000)); // Use small subset for quick bench
-    bench_full_pipeline(dims, 5_000);
+        bench_quantization(dims);
+        bench_hamming(dims);
+        bench_cosine(dims);
+        bench_batch_hamming(dims, 10_000);
+        bench_nsw_index(dims, 5_000);
+        bench_topology(dims, 1_000);
+        bench_bitplane(dims);
+    }
 
-    println!("\n═══ Large Scale (dims=1536, OpenAI ada-002) ═══");
-    let dims_large = 1536;
-    bench_quantization(dims_large);
-    bench_hamming(dims_large);
-    bench_batch_hamming(dims_large, 50_000);
-    bench_nsw_index(dims_large, 10_000);
+    bench_sift(None); // SIFT-128 recall & QPS
 
-    // ─── VERIFICATION SUITE ───
-    bench_verify_claims(dims);
+    if !sift_only {
+        let dims = 384;
+        bench_full_pipeline(dims, 5_000);
 
-    // ─── SIFT-10K BENCHMARK ───
+        println!("\n═══ Large Scale (dims=1536, OpenAI ada-002) ═══");
+        let dims_large = 1536;
+        bench_quantization(dims_large);
+        bench_hamming(dims_large);
+        bench_batch_hamming(dims_large, 50_000);
+        bench_nsw_index(dims_large, 10_000);
+
+        // ─── VERIFICATION SUITE ───
+        bench_verify_claims(dims);
+    }
+
+    // ─── SIFT-10K BENCHMARK (comprehensive) ───
     let sift_data_dir = std::path::PathBuf::from("data");
     if sift_data_dir.exists() || std::env::var("RUN_SIFT_BENCH").is_ok() {
         sift_bench::run_sift_benchmark(&sift_data_dir);
-    } else {
+    } else if !sift_only {
         println!("\n═══ SIFT-10K Benchmark: SKIPPED ═══");
         println!("  To run: mkdir -p data && cargo run -p palace-bench --release");
         println!("  Or: RUN_SIFT_BENCH=1 cargo run -p palace-bench --release");

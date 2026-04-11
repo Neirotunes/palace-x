@@ -11,7 +11,7 @@ pub mod node;
 pub mod nsw;
 
 pub use node::{GraphNode, MetaData};
-pub use nsw::NswIndex;
+pub use nsw::{DistanceMetric, NswIndex};
 pub use palace_core::NodeId;
 
 #[cfg(test)]

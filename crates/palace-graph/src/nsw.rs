@@ -15,6 +15,21 @@ use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::Arc;
 
+/// Distance metric used by the NSW index for graph construction and search.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DistanceMetric {
+    /// Cosine distance: 1 - cos(a, b). Best for normalized/semantic vectors.
+    Cosine,
+    /// Squared Euclidean distance: Σ(a_i - b_i)². Best for raw feature vectors (SIFT, etc).
+    L2,
+}
+
+/// Compute squared L2 (Euclidean) distance between two vectors.
+#[inline]
+fn l2_distance(a: &[f32], b: &[f32]) -> f32 {
+    a.iter().zip(b.iter()).map(|(x, y)| (x - y) * (x - y)).sum()
+}
+
 /// A candidate node with distance, used for min-heap operations
 #[derive(Debug, Clone)]
 struct Candidate {
@@ -55,7 +70,8 @@ pub struct NswIndex {
     hub_cache: RwLock<Vec<NodeId>>, // top-K hub nodes
     next_id: AtomicU64,
     dimensions: usize,
-    alpha: f32, // Pruning parameter for neighbor selection
+    alpha: f32,                     // Pruning parameter for neighbor selection
+    metric: DistanceMetric,          // Distance metric for graph construction & search
 }
 
 impl NswIndex {
@@ -71,15 +87,16 @@ impl NswIndex {
             read_snapshot: ArcSwap::from_pointee(im::HashMap::new()),
             max_neighbors,
             ef_construction,
-            ef_search: AtomicUsize::new(64), // Default ef for search
+            ef_search: AtomicUsize::new(64),
             hub_cache: RwLock::new(Vec::new()),
             next_id: AtomicU64::new(0),
             dimensions,
-            alpha: 1.2, // Default alpha for Vamana-style pruning
+            alpha: f32::INFINITY,
+            metric: DistanceMetric::Cosine,
         }
     }
 
-    /// Creates a new NSW index with custom alpha
+    /// Creates a new NSW index with custom alpha for Vamana-style pruning.
     pub fn with_alpha(
         dimensions: usize,
         max_neighbors: usize,
@@ -96,6 +113,33 @@ impl NswIndex {
             next_id: AtomicU64::new(0),
             dimensions,
             alpha,
+            metric: DistanceMetric::Cosine,
+        }
+    }
+
+    /// Creates a new NSW index with L2 (Euclidean) distance metric.
+    /// Use this for datasets where ground truth is based on L2 distance (e.g., SIFT).
+    pub fn with_l2(dimensions: usize, max_neighbors: usize, ef_construction: usize) -> Self {
+        NswIndex {
+            nodes: DashMap::new(),
+            read_snapshot: ArcSwap::from_pointee(im::HashMap::new()),
+            max_neighbors,
+            ef_construction,
+            ef_search: AtomicUsize::new(64),
+            hub_cache: RwLock::new(Vec::new()),
+            next_id: AtomicU64::new(0),
+            dimensions,
+            alpha: 1.2,
+            metric: DistanceMetric::L2,
+        }
+    }
+
+    /// Compute distance between two vectors using this index's configured metric.
+    #[inline]
+    fn dist(&self, a: &[f32], b: &[f32]) -> f32 {
+        match self.metric {
+            DistanceMetric::Cosine => cosine_distance(a, b),
+            DistanceMetric::L2 => l2_distance(a, b),
         }
     }
 
@@ -129,23 +173,8 @@ impl NswIndex {
             return node_id;
         }
 
-        // Search context: use current snapshot for neighborhood search
-        let snapshot = self.read_snapshot.load();
-
-        // If snapshot is empty (race condition), publish and retry
-        if snapshot.is_empty() {
-            self.publish_snapshot();
-            let snapshot = self.read_snapshot.load();
-            if snapshot.is_empty() {
-                // Still empty — just insert without neighbors
-                self.nodes.insert(node_id, node);
-                self.publish_snapshot();
-                return node_id;
-            }
-        }
-
-        // Find nearest neighbors for the new node
-        let nearest = self.search_for_insertion_internal(&node, &snapshot);
+        // Find nearest neighbors using live DashMap (not stale snapshot)
+        let nearest = self.search(&node.vector, Some(self.ef_construction));
 
         // Select neighbors using heuristic
         let base_vector = &node.vector;
@@ -183,7 +212,7 @@ impl NswIndex {
 
                     for nid in &neighbor_neighbor_ids {
                         if let Some(n) = self.nodes.get(nid) {
-                            let dist = cosine_distance(&neighbor_vector, &n.vector);
+                            let dist = self.dist(&neighbor_vector, &n.vector);
                             neighbor_candidates.push((*nid, dist));
                             neighbor_candidate_vectors.insert(*nid, n.vector.clone());
                         }
@@ -210,51 +239,46 @@ impl NswIndex {
         node_id
     }
 
-    /// Searches for the nearest neighbors of a node during insertion
+    /// Multi-start beam search during insertion — uses snapshot for consistency.
     fn search_for_insertion_internal(
         &self,
         query_node: &GraphNode,
         nodes: &im::HashMap<NodeId, GraphNode>,
     ) -> Vec<(NodeId, f32)> {
         let query_vec = &query_node.vector;
-        let mut candidates = BinaryHeap::new();
-        let mut w = BinaryHeap::new();
+        let ef = self.ef_construction;
 
-        // Start from a random entry point
-        let entry_id = {
-            let mut rng = rand::thread_rng();
-            let ids: Vec<_> = nodes.keys().copied().collect();
-            ids[rng.gen_range(0..ids.len())]
-        };
+        // Multiple random entry points
+        let mut rng = rand::thread_rng();
+        let all_ids: Vec<_> = nodes.keys().copied().collect();
+        let num_starts = 3.min(all_ids.len());
 
-        if let Some(entry_node) = nodes.get(&entry_id) {
-            let dist = cosine_distance(query_vec, &entry_node.vector);
-            candidates.push(std::cmp::Reverse(Candidate {
-                id: entry_id,
-                distance: dist,
-            }));
-            w.push(Candidate {
-                id: entry_id,
-                distance: dist,
-            });
+        let mut candidates: BinaryHeap<std::cmp::Reverse<Candidate>> = BinaryHeap::new();
+        let mut result_set: Vec<(NodeId, f32)> = Vec::with_capacity(ef + 1);
+        let mut visited = HashSet::new();
+
+        for _ in 0..num_starts {
+            let entry_id = all_ids[rng.gen_range(0..all_ids.len())];
+            if !visited.insert(entry_id) {
+                continue;
+            }
+            if let Some(entry_node) = nodes.get(&entry_id) {
+                let dist = self.dist(query_vec, &entry_node.vector);
+                candidates.push(std::cmp::Reverse(Candidate { id: entry_id, distance: dist }));
+                result_set.push((entry_id, dist));
+            }
         }
 
-        let mut visited = HashSet::new();
-        visited.insert(entry_id);
-
-        for _ in 0..self.ef_construction {
-            // Get the nearest unvisited candidate
-            let lowerbound = if let Some(candidate) = candidates.peek() {
-                candidate.0.distance
+        while let Some(std::cmp::Reverse(current)) = candidates.pop() {
+            let farthest = if result_set.len() >= ef {
+                result_set.iter().map(|(_, d)| *d).fold(0.0f32, f32::max)
             } else {
-                break;
+                f32::INFINITY
             };
 
-            if lowerbound > w.peek().map(|c| c.distance).unwrap_or(f32::INFINITY) {
+            if current.distance > farthest {
                 break;
             }
-
-            let current = candidates.pop().unwrap().0;
 
             if let Some(current_node) = nodes.get(&current.id) {
                 for neighbor_id in &current_node.neighbors {
@@ -263,31 +287,24 @@ impl NswIndex {
                     }
 
                     if let Some(neighbor_node) = nodes.get(neighbor_id) {
-                        let dist = cosine_distance(query_vec, &neighbor_node.vector);
+                        let dist = self.dist(query_vec, &neighbor_node.vector);
 
-                        if dist < w.peek().map(|c| c.distance).unwrap_or(f32::INFINITY)
-                            || w.len() < self.ef_construction
-                        {
+                        let far = if result_set.len() >= ef {
+                            result_set.iter().map(|(_, d)| *d).fold(0.0f32, f32::max)
+                        } else {
+                            f32::INFINITY
+                        };
+
+                        if dist < far || result_set.len() < ef {
                             candidates.push(std::cmp::Reverse(Candidate {
                                 id: *neighbor_id,
                                 distance: dist,
                             }));
+                            result_set.push((*neighbor_id, dist));
 
-                            w.push(Candidate {
-                                id: *neighbor_id,
-                                distance: dist,
-                            });
-
-                            if w.len() > self.ef_construction {
-                                // Remove the farthest
-                                let mut vec: Vec<_> = w.into_iter().collect();
-                                vec.sort_by(|a, b| {
-                                    a.distance
-                                        .partial_cmp(&b.distance)
-                                        .unwrap_or(Ordering::Equal)
-                                });
-                                vec.pop();
-                                w = vec.into_iter().collect();
+                            if result_set.len() > ef {
+                                result_set.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
+                                result_set.truncate(ef);
                             }
                         }
                     }
@@ -295,12 +312,16 @@ impl NswIndex {
             }
         }
 
-        w.into_iter().map(|c| (c.id, c.distance)).collect()
+        result_set
     }
 
-    /// Searches the index for nearest neighbors of a query vector
+    /// Multi-start greedy beam search for nearest neighbors.
     ///
-    /// Returns a vector of (NodeId, distance) tuples sorted by distance.
+    /// Uses multiple entry points (hubs + random) to compensate for flat
+    /// (non-hierarchical) graph structure. Correctly compares against the
+    /// FARTHEST result in the candidate set for termination.
+    ///
+    /// Returns (NodeId, distance) tuples sorted by distance ascending.
     pub fn search(&self, query: &[f32], ef: Option<usize>) -> Vec<(NodeId, f32)> {
         assert_eq!(
             query.len(),
@@ -314,48 +335,57 @@ impl NswIndex {
             return Vec::new();
         }
 
-        let mut candidates = BinaryHeap::new();
-        let mut w = BinaryHeap::new();
-
-        // Entry point: prefer hub if available, otherwise random
-        let entry_id = {
+        // Collect entry points: hubs + random
+        let num_starts = 5;
+        let mut entry_ids = Vec::with_capacity(num_starts);
+        {
             let hub_cache = self.hub_cache.read();
-            if !hub_cache.is_empty() {
-                hub_cache[0]
-            } else {
-                let mut rng = rand::thread_rng();
-                let ids: Vec<_> = self.nodes.iter().map(|r| *r.key()).collect();
-                ids[rng.gen_range(0..ids.len())]
+            for &hub_id in hub_cache.iter().take(num_starts) {
+                entry_ids.push(hub_id);
             }
-        };
-
-        if let Some(entry_node) = self.nodes.get(&entry_id) {
-            let dist = cosine_distance(query, &entry_node.vector);
-            candidates.push(std::cmp::Reverse(Candidate {
-                id: entry_id,
-                distance: dist,
-            }));
-            w.push(Candidate {
-                id: entry_id,
-                distance: dist,
-            });
+        }
+        if entry_ids.len() < num_starts {
+            let mut rng = rand::thread_rng();
+            let all_ids: Vec<_> = self.nodes.iter().map(|r| *r.key()).collect();
+            for _ in 0..(num_starts - entry_ids.len()).min(all_ids.len()) {
+                let id = all_ids[rng.gen_range(0..all_ids.len())];
+                if !entry_ids.contains(&id) {
+                    entry_ids.push(id);
+                }
+            }
         }
 
+        // candidates: min-heap — closest unexplored first
+        let mut candidates: BinaryHeap<std::cmp::Reverse<Candidate>> = BinaryHeap::new();
+        // result_set: track top-ef closest results (sorted vec)
+        let mut result_set: Vec<(NodeId, f32)> = Vec::with_capacity(ef + 1);
         let mut visited = HashSet::new();
-        visited.insert(entry_id);
 
-        for _ in 0..ef {
-            let lowerbound = if let Some(candidate) = candidates.peek() {
-                candidate.0.distance
+        // Seed all entry points
+        for &eid in &entry_ids {
+            if !visited.insert(eid) {
+                continue;
+            }
+            if let Some(node) = self.nodes.get(&eid) {
+                let dist = self.dist(query, &node.vector);
+                candidates.push(std::cmp::Reverse(Candidate { id: eid, distance: dist }));
+                result_set.push((eid, dist));
+            }
+        }
+
+        // Greedy expansion
+        while let Some(std::cmp::Reverse(current)) = candidates.pop() {
+            // Farthest distance in result set
+            let farthest = if result_set.len() >= ef {
+                result_set.iter().map(|(_, d)| *d).fold(0.0f32, f32::max)
             } else {
-                break;
+                f32::INFINITY
             };
 
-            if lowerbound > w.peek().map(|c| c.distance).unwrap_or(f32::INFINITY) {
+            // Stop if closest unexplored > farthest result
+            if current.distance > farthest {
                 break;
             }
-
-            let current = candidates.pop().unwrap().0;
 
             let neighbor_ids: Vec<NodeId> = self
                 .nodes
@@ -363,44 +393,34 @@ impl NswIndex {
                 .map(|n| n.neighbors.clone())
                 .unwrap_or_default();
 
-            for neighbor_id in neighbor_ids {
-                if !visited.insert(neighbor_id) {
+            for nid in neighbor_ids {
+                if !visited.insert(nid) {
                     continue;
                 }
+                if let Some(node) = self.nodes.get(&nid) {
+                    let dist = self.dist(query, &node.vector);
 
-                if let Some(neighbor_node) = self.nodes.get(&neighbor_id) {
-                    let dist = cosine_distance(query, &neighbor_node.vector);
+                    let farthest = if result_set.len() >= ef {
+                        result_set.iter().map(|(_, d)| *d).fold(0.0f32, f32::max)
+                    } else {
+                        f32::INFINITY
+                    };
 
-                    if dist < w.peek().map(|c| c.distance).unwrap_or(f32::INFINITY) || w.len() < ef
-                    {
-                        candidates.push(std::cmp::Reverse(Candidate {
-                            id: neighbor_id,
-                            distance: dist,
-                        }));
+                    if dist < farthest || result_set.len() < ef {
+                        candidates.push(std::cmp::Reverse(Candidate { id: nid, distance: dist }));
+                        result_set.push((nid, dist));
 
-                        w.push(Candidate {
-                            id: neighbor_id,
-                            distance: dist,
-                        });
-
-                        if w.len() > ef {
-                            let mut vec: Vec<_> = w.into_iter().collect();
-                            vec.sort_by(|a, b| {
-                                a.distance
-                                    .partial_cmp(&b.distance)
-                                    .unwrap_or(Ordering::Equal)
-                            });
-                            vec.pop();
-                            w = vec.into_iter().collect();
+                        if result_set.len() > ef {
+                            result_set.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
+                            result_set.truncate(ef);
                         }
                     }
                 }
             }
         }
 
-        let mut result: Vec<_> = w.into_iter().map(|c| (c.id, c.distance)).collect();
-        result.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
-        result
+        result_set.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
+        result_set
     }
 
     /// Performs binary (Hamming) search on the index

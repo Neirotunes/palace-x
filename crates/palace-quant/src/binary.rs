@@ -4,12 +4,12 @@
 //! Binary quantization: converts f32 vectors to packed u64 bit vectors.
 //!
 //! Each dimension is quantized to a single bit based on whether it exceeds a threshold (0.0).
-//! 64 dimensions are packed into each u64, MSB-first.
+//! 64 dimensions are packed into each u64, LSB-first (dimension i → bit position i%64).
 
 /// Quantizes a single f32 vector to packed u64 representation.
 ///
-/// Each u64 contains 64 binary digits packed MSB-first.
-/// Bit i in word j corresponds to dimension i*64 + j.
+/// Each u64 contains 64 binary digits packed LSB-first.
+/// Dimension `d` maps to bit `d % 64` in word `d / 64`.
 ///
 /// # Arguments
 /// * `vector` - Input f32 slice to quantize
@@ -21,11 +21,9 @@ pub fn quantize_binary(vector: &[f32]) -> Vec<u64> {
     let mut result = vec![0u64; num_words];
 
     for (i, &value) in vector.iter().enumerate() {
-        let word_idx = i / 64;
-        let bit_idx = i % 64;
-        let bit = if value > 0.0 { 1u64 } else { 0u64 };
-        // Set bit MSB-first: shift from the top
-        result[word_idx] |= bit << (63 - bit_idx);
+        if value > 0.0 {
+            result[i / 64] |= 1u64 << (i % 64);
+        }
     }
 
     result
@@ -72,8 +70,8 @@ mod tests {
             .collect();
         let result = quantize_binary(&v);
         assert_eq!(result.len(), 1);
-        // Even indices (0,2,4,...) are set: 0xAAAA...
-        assert_eq!(result[0], 0xAAAAAAAAAAAAAAAA);
+        // Even indices (0,2,4,...) are set LSB-first: 0x5555...
+        assert_eq!(result[0], 0x5555555555555555);
     }
 
     #[test]
@@ -84,8 +82,8 @@ mod tests {
         assert_eq!(result[0], u64::MAX);
         assert_eq!(result[1], u64::MAX);
         assert_eq!(result[2], u64::MAX);
-        // Only 200 - 3*64 = 8 bits set in last word (MSB-first)
-        assert_eq!(result[3], 0xFF00000000000000);
+        // Only 200 - 3*64 = 8 bits set in last word (LSB-first, bits 0..7)
+        assert_eq!(result[3], 0x00000000000000FF);
     }
 
     #[test]
@@ -94,8 +92,8 @@ mod tests {
         let result = quantize_binary(&v);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0], u64::MAX);
-        // Only 96 - 64 = 32 bits set in last word (MSB-first)
-        assert_eq!(result[1], 0xFFFFFFFF00000000);
+        // Only 96 - 64 = 32 bits set in last word (LSB-first, bits 0..31)
+        assert_eq!(result[1], 0x00000000FFFFFFFF);
     }
 
     #[test]
@@ -109,22 +107,22 @@ mod tests {
     }
 
     #[test]
-    fn test_quantize_msb_first() {
-        // First bit is 1, rest are 0
+    fn test_quantize_first_dim() {
+        // First dimension is 1, rest are 0
         let mut v = vec![0.0; 64];
         v[0] = 1.0;
         let result = quantize_binary(&v);
-        // Bit 0 is MSB, so it should be 1 << 63
-        assert_eq!(result[0], 1u64 << 63);
+        // Dimension 0 → bit 0 (LSB)
+        assert_eq!(result[0], 1u64);
     }
 
     #[test]
-    fn test_quantize_lsb() {
-        // Last bit is 1, rest are 0
+    fn test_quantize_last_dim() {
+        // Last dimension is 1, rest are 0
         let mut v = vec![0.0; 64];
         v[63] = 1.0;
         let result = quantize_binary(&v);
-        // Bit 63 is LSB
-        assert_eq!(result[0], 1u64);
+        // Dimension 63 → bit 63
+        assert_eq!(result[0], 1u64 << 63);
     }
 }

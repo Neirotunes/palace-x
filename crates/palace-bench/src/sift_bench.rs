@@ -70,7 +70,7 @@ pub fn run_sift_benchmark(data_dir: &Path) {
 
     // ─── NSW + RaBitQ reranking ───────────────────────────────
     // Build NSW index once
-    let nsw = NswIndex::with_alpha(dataset.dim, 32, 200, 1.2);
+    let nsw = NswIndex::with_l2(dataset.dim, 32, 200);
     println!("\nBuilding NSW index ({} vectors)...", dataset.base.len());
     let t0 = Instant::now();
     for (i, vec) in dataset.base.iter().enumerate() {
