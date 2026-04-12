@@ -697,6 +697,90 @@ fn bench_uma_hnsw(dims: usize, n: usize) {
     );
 }
 
+// ─── RaBitQ NEON Benchmark ─────────────────────────────────────────
+
+fn bench_rabitq_neon(dims: usize, n_codes: usize) {
+    println!(
+        "\n═══ RaBitQ NEON Popcount (dims={}, codes={}) ═══",
+        dims, n_codes
+    );
+    let mut rng = rand::thread_rng();
+
+    // Build RaBitQ index
+    let index = palace_quant::rabitq::RaBitQIndex::new(dims, 42);
+
+    // Generate random vectors and encode at 4-bit
+    let vectors: Vec<Vec<f32>> = (0..n_codes)
+        .map(|_| random_vector(&mut rng, dims))
+        .collect();
+
+    let codes: Vec<palace_quant::rabitq::RaBitQCode> = vectors
+        .iter()
+        .map(|v| index.encode_multibit(v, 4))
+        .collect();
+
+    // Prepare query
+    let query_vec = random_vector(&mut rng, dims);
+    let query = index.encode_query(&query_vec);
+
+    // ── Single distance estimation throughput ──
+    bench(
+        "rabitq_4bit estimate_distance (single)",
+        1_000_000,
+        || {
+            let _ = index.estimate_distance(&query, &codes[0]);
+        },
+    );
+
+    // ── Batch top-k throughput (the real bottleneck) ──
+    bench(
+        &format!("rabitq_4bit batch top-10 (n={})", n_codes),
+        10_000,
+        || {
+            let _ = palace_quant::rabitq::rabitq_topk(&index, &query, &codes, 10);
+        },
+    );
+
+    // ── QPS measurement ──
+    let iters = 10_000usize;
+    let start = Instant::now();
+    for _ in 0..iters {
+        let _ = palace_quant::rabitq::rabitq_topk(&index, &query, &codes, 10);
+    }
+    let elapsed = start.elapsed();
+    let qps = iters as f64 / elapsed.as_secs_f64();
+    println!(
+        "  {:<45} {:>10.0} QPS  (top-10, {} codes)",
+        "rabitq_4bit QPS", qps, n_codes
+    );
+
+    // ── 1-bit comparison (same index, different encoding) ──
+    let codes_1bit: Vec<palace_quant::rabitq::RaBitQCode> = vectors
+        .iter()
+        .map(|v| index.encode(v))
+        .collect();
+    let query_1bit = index.encode_query(&query_vec);
+
+    bench(
+        "rabitq_1bit estimate_distance (single)",
+        1_000_000,
+        || {
+            let _ = index.estimate_distance(&query_1bit, &codes_1bit[0]);
+        },
+    );
+
+    let start = Instant::now();
+    for _ in 0..iters {
+        let _ = palace_quant::rabitq::rabitq_topk(&index, &query_1bit, &codes_1bit, 10);
+    }
+    let elapsed = start.elapsed();
+    let qps_1bit = iters as f64 / elapsed.as_secs_f64();
+    println!(
+        "  {:<45} {:>10.0} QPS  (top-10, {} codes)",
+        "rabitq_1bit QPS", qps_1bit, n_codes
+    );
+}
+
 // ─── Main ──────────────────────────────────────────────────────────
 
 fn main() {
@@ -724,6 +808,7 @@ fn main() {
 
     if !sift_only {
         let dims = 384;
+        bench_rabitq_neon(dims, 10_000);
         bench_metal_batch(dims);
         bench_uma_hnsw(dims, 5_000);
         bench_full_pipeline(dims, 5_000);

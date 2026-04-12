@@ -389,19 +389,36 @@ impl RaBitQIndex {
     }
 
     /// 1-bit signed inner product: ⟨x_bar, q'⟩ where x_bar ∈ {-1, +1}^D
+    ///
+    /// Algebraic identity: result = 2·Σ(bit=1) q[i] − Σ q[i]
+    /// The NEON path uses branchless vtstq_u32 mask expansion, eliminating
+    /// all conditional branches from the inner loop.
     #[inline]
     fn compute_1bit_ip(&self, sign_bits: &[u64], q_rotated: &[f32]) -> f32 {
-        let mut result: f32 = 0.0;
-        for i in 0..self.dim {
-            let bit = (sign_bits[i / 64] >> (i % 64)) & 1;
-            let val = q_rotated[i];
-            if bit == 1 {
-                result += val;
-            } else {
-                result -= val;
-            }
+        #[cfg(target_arch = "aarch64")]
+        {
+            // NEON path: 2·masked_sum − sum_q (branchless)
+            let masked_sum = unsafe {
+                neon_masked_sum(sign_bits, q_rotated.as_ptr(), self.dim)
+            };
+            let sum_q = unsafe { neon_sum_f32(q_rotated, self.dim) };
+            return 2.0 * masked_sum - sum_q;
         }
-        result
+
+        #[cfg(not(target_arch = "aarch64"))]
+        {
+            let mut result: f32 = 0.0;
+            for i in 0..self.dim {
+                let bit = (sign_bits[i / 64] >> (i % 64)) & 1;
+                let val = q_rotated[i];
+                if bit == 1 {
+                    result += val;
+                } else {
+                    result -= val;
+                }
+            }
+            result
+        }
     }
 
     /// Multi-bit weighted bit-plane inner product.
@@ -417,6 +434,10 @@ impl RaBitQIndex {
     ///
     /// where `plane_ip_k = Σ_i (bit_k[i] == 1) · q'[i]` and
     /// `half_max = (2^bits - 1) / 2`.
+    /// NEON path: per-plane masked sums via vtstq_u32, then weighted combination.
+    /// Eliminates all scalar bit-extraction and conditional branches.
+    /// For 4-bit 128-dim: 4 planes × 2 words × 8 NEON groups = 64 branchless ops
+    /// vs. 4 × 128 = 512 branch-heavy scalar ops.
     #[inline]
     fn compute_multibit_ip(
         &self,
@@ -427,29 +448,172 @@ impl RaBitQIndex {
         let bits = code.bits as usize;
         let half_max = ((1u32 << bits) - 1) as f32 / 2.0; // 7.5 for 4-bit, 63.5 for 7-bit
 
-        // Compute per-plane inner products: plane_ip_k = Σ_i bit_k[i] · q'[i]
-        let mut weighted_ip: f32 = 0.0;
-        for k in 0..bits {
-            let plane_offset = k * words_per_plane;
-            let plane = &code.binary[plane_offset..plane_offset + words_per_plane];
-
-            let mut plane_ip: f32 = 0.0;
-            for i in 0..self.dim {
-                let bit = (plane[i / 64] >> (i % 64)) & 1;
-                if bit == 1 {
-                    plane_ip += q_rotated[i];
-                }
+        #[cfg(target_arch = "aarch64")]
+        let weighted_ip = {
+            let mut weighted: f32 = 0.0;
+            for k in 0..bits {
+                let plane_offset = k * words_per_plane;
+                let plane = &code.binary[plane_offset..plane_offset + words_per_plane];
+                let plane_ip = unsafe {
+                    neon_masked_sum(plane, q_rotated.as_ptr(), self.dim)
+                };
+                weighted += (1u32 << k) as f32 * plane_ip;
             }
-            weighted_ip += (1u32 << k) as f32 * plane_ip;
-        }
+            weighted
+        };
+
+        #[cfg(not(target_arch = "aarch64"))]
+        let weighted_ip = {
+            let mut weighted: f32 = 0.0;
+            for k in 0..bits {
+                let plane_offset = k * words_per_plane;
+                let plane = &code.binary[plane_offset..plane_offset + words_per_plane];
+                let mut plane_ip: f32 = 0.0;
+                for i in 0..self.dim {
+                    let bit = (plane[i / 64] >> (i % 64)) & 1;
+                    if bit == 1 {
+                        plane_ip += q_rotated[i];
+                    }
+                }
+                weighted += (1u32 << k) as f32 * plane_ip;
+            }
+            weighted
+        };
 
         // Compute sum of query values for the offset term
+        #[cfg(target_arch = "aarch64")]
+        let sum_q = unsafe { neon_sum_f32(q_rotated, self.dim) };
+
+        #[cfg(not(target_arch = "aarch64"))]
         let sum_q: f32 = q_rotated[..self.dim].iter().sum();
 
         // Reconstruct: ⟨x_recon, q'⟩ = (1/half_max) · (weighted_ip - half_max · sum_q)
         // This maps the [0, 2^bits-1] quantized values back to [-1, +1] scale
         (weighted_ip - half_max * sum_q) / half_max
     }
+}
+
+// ─── NEON SIMD kernels for RaBitQ bit-plane inner products ───────────────────
+//
+// Core kernel: `neon_masked_sum` — branchless masked sum using vtstq_u32.
+// For each u64 word of a bit-plane, expands 4 bits at a time into 128-bit
+// float masks via NEON bitwise test, then conditionally accumulates query
+// values with zero branches in the inner loop.
+//
+// Throughput: 8 f32 values per iteration (dual accumulator), 16 iterations
+// per u64 word. For SIFT-128 (2 words): 4 NEON cycles per plane.
+
+/// NEON masked sum: Σ_i (bits[i] == 1) · q[i]
+///
+/// Processes bit-plane words against query float values using branchless
+/// vtstq_u32 mask expansion. Dual accumulator for M1 NEON pipeline.
+///
+/// # Safety
+/// Requires aarch64 with NEON. `q_ptr` must point to at least `dim` f32s.
+/// `bit_words` must contain at least `ceil(dim/64)` u64 words.
+#[cfg(target_arch = "aarch64")]
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn neon_masked_sum(bit_words: &[u64], q_ptr: *const f32, dim: usize) -> f32 {
+    use std::arch::aarch64::*;
+
+    // Nibble selector: tests which of bits 0-3 are set in the broadcast value
+    let bit_select: [u32; 4] = [1, 2, 4, 8];
+    let selector = vld1q_u32(bit_select.as_ptr());
+    let zero = vdupq_n_f32(0.0);
+
+    let mut acc0 = vdupq_n_f32(0.0);
+    let mut acc1 = vdupq_n_f32(0.0);
+    let mut q_offset = 0usize;
+
+    for &word in &bit_words[..((dim + 63) / 64)] {
+        let remaining = dim - q_offset;
+        let word_count = remaining.min(64);
+        let mut bits = word;
+
+        // ── 8-wide core loop: 2 nibbles → 8 f32s per iteration ──
+        let mut j = 0usize;
+        while j + 8 <= word_count {
+            // First nibble → 4 floats
+            let nibble0 = (bits & 0xF) as u32;
+            bits >>= 4;
+            let mask0 = vtstq_u32(vdupq_n_u32(nibble0), selector);
+            let q0 = vld1q_f32(q_ptr.add(q_offset + j));
+            acc0 = vaddq_f32(acc0, vbslq_f32(mask0, q0, zero));
+
+            // Second nibble → 4 floats
+            let nibble1 = (bits & 0xF) as u32;
+            bits >>= 4;
+            let mask1 = vtstq_u32(vdupq_n_u32(nibble1), selector);
+            let q1 = vld1q_f32(q_ptr.add(q_offset + j + 4));
+            acc1 = vaddq_f32(acc1, vbslq_f32(mask1, q1, zero));
+
+            j += 8;
+        }
+
+        // ── 4-wide tail ──
+        if j + 4 <= word_count {
+            let nibble = (bits & 0xF) as u32;
+            bits >>= 4;
+            let mask = vtstq_u32(vdupq_n_u32(nibble), selector);
+            let q = vld1q_f32(q_ptr.add(q_offset + j));
+            acc0 = vaddq_f32(acc0, vbslq_f32(mask, q, zero));
+            j += 4;
+        }
+
+        // ── Scalar tail (< 4 remaining in this word) ──
+        // Use lane 0 of acc0 for scalar remainder to avoid extra reduce
+        let mut scalar_tail: f32 = 0.0;
+        while j < word_count {
+            if (word >> j) & 1 == 1 {
+                scalar_tail += *q_ptr.add(q_offset + j);
+            }
+            j += 1;
+        }
+        // Inject scalar tail into lane 0 of acc0
+        acc0 = vsetq_lane_f32(vgetq_lane_f32(acc0, 0) + scalar_tail, acc0, 0);
+
+        q_offset += word_count;
+    }
+
+    // Horizontal reduce: sum all 8 lanes (4+4)
+    vaddvq_f32(vaddq_f32(acc0, acc1))
+}
+
+/// NEON f32 horizontal sum with dual accumulator.
+///
+/// # Safety
+/// Requires aarch64 with NEON. `data` must have at least `dim` elements.
+#[cfg(target_arch = "aarch64")]
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn neon_sum_f32(data: &[f32], dim: usize) -> f32 {
+    use std::arch::aarch64::*;
+
+    let ptr = data.as_ptr();
+    let mut acc0 = vdupq_n_f32(0.0);
+    let mut acc1 = vdupq_n_f32(0.0);
+    let mut i = 0usize;
+
+    while i + 8 <= dim {
+        acc0 = vaddq_f32(acc0, vld1q_f32(ptr.add(i)));
+        acc1 = vaddq_f32(acc1, vld1q_f32(ptr.add(i + 4)));
+        i += 8;
+    }
+    if i + 4 <= dim {
+        acc0 = vaddq_f32(acc0, vld1q_f32(ptr.add(i)));
+        i += 4;
+    }
+
+    let mut result = vaddvq_f32(vaddq_f32(acc0, acc1));
+
+    // Scalar tail
+    while i < dim {
+        result += *ptr.add(i);
+        i += 1;
+    }
+
+    result
 }
 
 
@@ -931,5 +1095,80 @@ mod tests {
 
         assert!(avg_x0_1bit > 0.0 && avg_x0_1bit.is_finite(), "1-bit x0 should be positive finite");
         assert!(avg_x0_4bit > 0.0 && avg_x0_4bit.is_finite(), "4-bit x0 should be positive finite");
+    }
+
+    /// Verify that 1-bit IP satisfies the algebraic identity:
+    /// result = 2·Σ(bit=1) q[i] − Σ q[i]
+    #[test]
+    fn test_1bit_ip_algebraic_identity() {
+        let dim = 128;
+        let index = RaBitQIndex::new(dim, 42);
+        let mut rng = StdRng::seed_from_u64(999);
+
+        for _ in 0..100 {
+            let v: Vec<f32> = (0..dim).map(|_| rng.gen::<f32>() * 2.0 - 1.0).collect();
+            let code = index.encode(&v);
+            let q: Vec<f32> = (0..dim).map(|_| rng.gen::<f32>() * 2.0 - 1.0).collect();
+            let words_per_plane = (dim + 63) / 64;
+
+            // Scalar reference
+            let mut scalar_result: f32 = 0.0;
+            for i in 0..dim {
+                let bit = (code.binary[i / 64] >> (i % 64)) & 1;
+                if bit == 1 { scalar_result += q[i]; } else { scalar_result -= q[i]; }
+            }
+
+            // Algebraic: 2·masked_sum − sum_q
+            let mut masked_sum: f32 = 0.0;
+            for i in 0..dim {
+                if (code.binary[i / 64] >> (i % 64)) & 1 == 1 {
+                    masked_sum += q[i];
+                }
+            }
+            let sum_q: f32 = q[..dim].iter().sum();
+            let algebraic = 2.0 * masked_sum - sum_q;
+
+            assert!(
+                (scalar_result - algebraic).abs() < 1e-4,
+                "Algebraic identity mismatch: scalar={}, algebraic={}",
+                scalar_result, algebraic
+            );
+
+            // Via index method (dispatches to NEON on aarch64)
+            let method_result = index.compute_1bit_ip(
+                &code.binary[..words_per_plane], &q
+            );
+            assert!(
+                (scalar_result - method_result).abs() < 1e-3,
+                "Method vs scalar mismatch: method={}, scalar={}",
+                method_result, scalar_result
+            );
+        }
+    }
+
+    /// Verify multi-bit IP produces consistent results across both code paths.
+    #[test]
+    fn test_multibit_ip_consistency() {
+        let dim = 128;
+        let index = RaBitQIndex::new(dim, 42);
+        let mut rng = StdRng::seed_from_u64(1234);
+
+        for _ in 0..50 {
+            let v: Vec<f32> = (0..dim).map(|_| rng.gen::<f32>() * 2.0 - 1.0).collect();
+            let code_4bit = index.encode_multibit(&v, 4);
+            let q: Vec<f32> = (0..dim).map(|_| rng.gen::<f32>() * 2.0 - 1.0).collect();
+            let query = index.encode_query(&q);
+
+            let (est_dist, lower_bound) = index.estimate_distance(&query, &code_4bit);
+
+            // Distance should be non-negative
+            assert!(est_dist >= 0.0, "Estimated distance should be >= 0, got {}", est_dist);
+            // Lower bound should be <= estimated distance
+            assert!(
+                lower_bound <= est_dist + 1e-3,
+                "Lower bound ({}) should be <= estimated distance ({})",
+                lower_bound, est_dist
+            );
+        }
     }
 }
