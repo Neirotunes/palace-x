@@ -1,0 +1,42 @@
+#!/bin/bash
+# Palace-X pre-commit hook
+# Install: cp scripts/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+
+set -e
+
+echo "🔍 Running pre-commit checks..."
+
+# Format check
+echo "  [1/3] cargo fmt"
+cargo fmt --all -- --check 2>/dev/null
+if [ $? -ne 0 ]; then
+    echo "FAIL: cargo fmt — run 'cargo fmt --all' to fix"
+    exit 1
+fi
+
+# Clippy
+echo "  [2/3] cargo clippy"
+cargo clippy --workspace --all-targets -- -D warnings \
+    -A async_fn_in_trait \
+    -A clippy::manual_div_ceil \
+    -A unreachable_code \
+    -A clippy::redundant_closure \
+    -A clippy::map_entry \
+    -A clippy::non_canonical_partial_ord_impl \
+    -A clippy::overly_complex_bool_expr \
+    -A clippy::manual_clamp \
+    -A clippy::needless_range_loop 2>/dev/null
+if [ $? -ne 0 ]; then
+    echo "FAIL: cargo clippy"
+    exit 1
+fi
+
+# Tests
+echo "  [3/3] cargo test"
+cargo test --workspace --quiet 2>/dev/null
+if [ $? -ne 0 ]; then
+    echo "FAIL: cargo test"
+    exit 1
+fi
+
+echo "All checks passed."

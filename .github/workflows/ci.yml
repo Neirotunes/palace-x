@@ -8,12 +8,14 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
 
 jobs:
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
@@ -42,3 +44,60 @@ jobs:
         with:
           components: rustfmt
       - run: cargo fmt --all -- --check
+
+  # Recall regression gate — fails if RaBitQ R@10 drops below threshold
+  bench-recall:
+    name: Recall Regression
+    runs-on: ubuntu-latest
+    needs: [test]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run SIFT-10K benchmark
+        run: |
+          mkdir -p data
+          cargo run -p palace-bench --release -- --sift 2>&1 | tee bench_output.txt
+      - name: Check recall thresholds
+        run: |
+          echo "=== Recall Regression Check ==="
+          # Extract RaBitQ 1-bit R@10
+          R10=$(grep -oP 'RaBitQ 1-bit.*?R@10:\s*\K[0-9.]+' bench_output.txt || echo "0")
+          echo "RaBitQ 1-bit R@10 = ${R10}%"
+          # Fail if recall dropped below 45% (current: ~54%, allows some variance)
+          python3 -c "
+          r = float('${R10}')
+          threshold = 45.0
+          print(f'Threshold: {threshold}%')
+          if r < threshold:
+              print(f'FAIL: R@10 {r}% < {threshold}%')
+              exit(1)
+          print(f'PASS: R@10 {r}% >= {threshold}%')
+          "
+      - name: Upload benchmark output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-output
+          path: bench_output.txt
+          retention-days: 30
+
+  # Coverage report via cargo-tarpaulin
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    needs: [test]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install tarpaulin
+        run: cargo install cargo-tarpaulin
+      - name: Generate coverage
+        run: cargo tarpaulin --workspace --out xml --output-dir coverage/ --skip-clean
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/cobertura.xml
+          retention-days: 30
