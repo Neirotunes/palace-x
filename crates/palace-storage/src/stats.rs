@@ -87,7 +87,7 @@ impl MemoryPalace {
     /// This operation may require synchronous graph traversal to compute hub scores.
     /// For large indices, consider caching results and updating periodically.
     pub fn stats(&self) -> PalaceStats {
-        let total_nodes = self.nsw.len();
+        let total_nodes = self.live_node_count();
         let dimensions = self.dimensions;
 
         // Memory estimation

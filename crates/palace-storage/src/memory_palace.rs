@@ -92,6 +92,11 @@ impl MemoryPalace {
         }
     }
 
+    /// Number of live nodes (excludes vacuumed).
+    pub fn live_node_count(&self) -> usize {
+        self.vector_store.read().len()
+    }
+
     /// Publish HNSW snapshot for wait-free reads (call after batch insertion).
     pub fn publish_snapshot(&self) {
         self.hnsw.publish_snapshot();
@@ -319,9 +324,9 @@ impl MemoryProvider for MemoryPalace {
         Ok(count)
     }
 
-    /// Get the total number of nodes in the index.
+    /// Get the total number of live nodes (excludes vacuumed).
     async fn len(&self) -> usize {
-        self.hnsw.len()
+        self.vector_store.read().len()
     }
 }
 
