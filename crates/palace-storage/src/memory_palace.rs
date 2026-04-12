@@ -15,6 +15,9 @@ use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
+#[cfg(target_os = "macos")]
+use palace_optimizer::metal_batch::{gpu_rerank, MetalBatchSearch, MetalDistanceMetric};
+
 /// Palace-X in-memory implementation combining HNSW, topological reranking, and bit-plane storage.
 ///
 /// The MemoryPalace provides a two-stage retrieval pipeline:
@@ -38,6 +41,9 @@ pub struct MemoryPalace {
     vector_store: RwLock<HashMap<NodeId, Vec<f32>>>,
     metadata_store: RwLock<HashMap<NodeId, MetaData>>,
     thermal: palace_optimizer::ThermalGuard,
+    /// Metal GPU batch distance pipeline (macOS only, None if init fails)
+    #[cfg(target_os = "macos")]
+    metal_gpu: Option<MetalBatchSearch>,
     next_id: AtomicU64,
     /// Track inserts since last snapshot for auto-publish
     inserts_since_snapshot: AtomicU64,
@@ -87,6 +93,8 @@ impl MemoryPalace {
             vector_store: RwLock::new(std::collections::HashMap::new()),
             metadata_store: RwLock::new(std::collections::HashMap::new()),
             thermal: palace_optimizer::ThermalGuard::default(),
+            #[cfg(target_os = "macos")]
+            metal_gpu: MetalBatchSearch::new(),
             next_id: AtomicU64::new(0),
             inserts_since_snapshot: AtomicU64::new(0),
         }
@@ -233,28 +241,77 @@ impl MemoryProvider for MemoryPalace {
             return Ok(Vec::new());
         }
 
-        // Convert candidates to Fragment with precise cosine distances
+        // Convert candidates to Fragment with precise distances
         let vector_store = self.vector_store.read();
         let metadata_store = self.metadata_store.read();
 
-        let mut fragments: Vec<Fragment> = candidates
+        // Collect valid candidates (exist in vector_store + metadata_store)
+        let valid_candidates: Vec<(NodeId, &Vec<f32>, &MetaData)> = candidates
             .iter()
             .take(config.rerank_k)
-            .filter_map(|(node_id, _hnsw_dist)| {
-                // Safe vector access — no raw pointers
-                vector_store.get(node_id).and_then(|stored_vec| {
-                    metadata_store.get(node_id).map(|meta| {
-                        // Compute precise cosine distance using NEON SIMD
-                        let cosine_dist = compute_cosine_distance(query, stored_vec);
+            .filter_map(|(node_id, _)| {
+                vector_store.get(node_id).and_then(|vec| {
+                    metadata_store.get(node_id).map(|meta| (*node_id, vec, meta))
+                })
+            })
+            .collect();
 
-                        Fragment {
-                            node_id: *node_id,
-                            score: 1.0 - cosine_dist,
-                            metadata: meta.clone(),
-                            vector: None,
-                        }
+        // GPU batch reranking when ≥256 candidates on macOS, else CPU path
+        #[cfg(target_os = "macos")]
+        let mut fragments: Vec<Fragment> = if valid_candidates.len() >= 256 {
+            // Pack candidate vectors into flat row-major buffer
+            let flat_vecs: Vec<f32> = valid_candidates
+                .iter()
+                .flat_map(|(_, vec, _)| vec.iter().copied())
+                .collect();
+
+            let result = gpu_rerank(
+                self.metal_gpu.as_ref(),
+                query,
+                &flat_vecs,
+                self.dimensions,
+                MetalDistanceMetric::L2,
+                valid_candidates.len(), // return all, trim later
+            );
+
+            result
+                .ranked
+                .iter()
+                .filter_map(|(idx, dist)| {
+                    valid_candidates.get(*idx).map(|(node_id, _, meta)| Fragment {
+                        node_id: *node_id,
+                        score: 1.0 / (1.0 + dist), // Convert L2 distance to score (closer = higher)
+                        metadata: (*meta).clone(),
+                        vector: None,
                     })
                 })
+                .collect()
+        } else {
+            valid_candidates
+                .iter()
+                .map(|(node_id, stored_vec, meta)| {
+                    let cosine_dist = compute_cosine_distance(query, stored_vec);
+                    Fragment {
+                        node_id: *node_id,
+                        score: 1.0 - cosine_dist,
+                        metadata: (*meta).clone(),
+                        vector: None,
+                    }
+                })
+                .collect()
+        };
+
+        #[cfg(not(target_os = "macos"))]
+        let mut fragments: Vec<Fragment> = valid_candidates
+            .iter()
+            .map(|(node_id, stored_vec, meta)| {
+                let cosine_dist = compute_cosine_distance(query, stored_vec);
+                Fragment {
+                    node_id: *node_id,
+                    score: 1.0 - cosine_dist,
+                    metadata: (*meta).clone(),
+                    vector: None,
+                }
             })
             .collect();
 
