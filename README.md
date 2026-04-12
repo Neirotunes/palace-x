@@ -50,17 +50,42 @@ The topological reranking metric $d_{total}$ combines cosine distance with struc
 
 $$d_{total}(x, y) = \alpha \cdot d_{cosine}(x, y) + \beta \cdot \exp(-\beta_1(C_{xy}) / |E(C_{xy})|)$$
 
-Run the ablation study to measure the effect of β₁ reranking vs pure cosine:
+Results on 1000 vectors × 128d, kNN ground-truth graph:
+
+| α (cosine) | β (topo) | R@10 | MRR | Latency |
+|------------|----------|------|-----|---------|
+| 1.0 | 0.0 | **100.0%** | 1.000 | 2.6ms |
+| 0.9 | 0.1 | 88.8% | 1.000 | 9.8ms |
+| 0.8 | 0.2 | 82.0% | 1.000 | 9.7ms |
+| 0.7 | 0.3 | 70.2% | 1.000 | 9.7ms |
+| 0.0 | 1.0 | 23.4% | 0.437 | 9.6ms |
+
+> **Interpretation:** On a perfect kNN graph, topological reranking adds noise rather than value —
+> the ground-truth neighbors are already optimal. The real benefit of β₁ reranking will appear
+> with approximate graphs (NSW/HNSW) where cosine alone misses structurally-connected neighbors.
+> This is testable after the HNSW upgrade in v0.2.
 
 ```bash
+# Reproduce
 cargo test -p palace-topo --test ablation_study -- --nocapture
 ```
 
 ### Vamana α-Pruning Comparison
 
-The neighbor selection heuristic uses α-RNG pruning (Vamana-style). Comparison of α values:
+The neighbor selection heuristic uses α-RNG pruning (Vamana-style). Results on 1000 vectors × 128d:
+
+| α | Recall@10 |
+|---|-----------|
+| 1.0 (strict RNG) | 4.0% |
+| 1.2 (default) | 3.4% |
+| 1.5 (relaxed) | 7.2% |
+
+> **Interpretation:** Recall is low across all α values, confirming the bottleneck is flat NSW
+> graph construction quality (early nodes get poor neighborhoods), not the pruning heuristic.
+> HNSW hierarchical build is the fix — planned for v0.2.
 
 ```bash
+# Reproduce
 cargo test -p palace-graph --test recall_test test_alpha_pruning -- --nocapture
 ```
 
