@@ -38,7 +38,7 @@ Reproducible via `cargo run -p palace-bench --release`.
 |--------|-----|------|-----|------------|
 | Brute-force L2 (baseline) | 100.0% | 100.0% | 1,166 | D×4 B |
 | RaBitQ 1-bit | 52.0% | 54.0% | 346 | D/8+16 B |
-| RaBitQ 4-bit | 52.0% | 54.0% | 342 | D/2+16 B |
+| RaBitQ 4-bit (v0.2) | — | — | — | D/2+16 B |
 | Naive binary / Hamming | 26.0% | 15.5% | 3,667 | D/8 B |
 
 #### Legacy NSW (deprecated, replaced by HNSW)
@@ -122,9 +122,9 @@ Query Vector (f32)
        │
        ▼
 ┌──────────────────┐
-│  Stage 1: Coarse │  NSW graph search with Hamming distance
-│  (SIMD-fast)     │  Entry via hub-highway cache
-│  ef candidates   │  α-RNG pruned neighbor selection
+│  Stage 1: HNSW   │  Hierarchical beam search with L2 distance
+│  (99.8% R@10)    │  α-RNG pruned neighbor selection (α=1.2)
+│  M=16, ef=32+    │  Level: floor(-ln(u) / ln(M))
 └────────┬─────────┘
          │
 ┌────────▼──────────────┐
@@ -190,26 +190,26 @@ cargo test -p palace-graph --test recall_test test_alpha_pruning -- --nocapture
 ### Programmatic Usage
 
 ```rust
-use palace_graph::{NswIndex, MetaData};
+use palace_graph::{HnswIndex, MetaData};
 use palace_quant::rabitq::RaBitQIndex;
 
-// Build index with α=1.2 pruning
-let index = NswIndex::with_alpha(128, 32, 200, 1.2);
+// Build HNSW index (M=16, ef_c=200, L2 metric)
+let index = HnswIndex::new(128, 16, 200);
 
 // Insert vectors
 for (i, vec) in vectors.iter().enumerate() {
     index.insert(vec.clone(), MetaData { label: format!("{}", i) });
 }
-index.update_hub_scores();
+index.publish_snapshot(); // Required after batch insertion
 
-// Search
-let results = index.search(&query, Some(64)); // ef=64
+// Search — 99.8% R@10 at ef=32
+let results = index.search(&query, Some(32));
 
-// Optional: RaBitQ reranking for better recall
+// Optional: RaBitQ 4-bit distance estimation (compressed search)
 let rq = RaBitQIndex::with_centroid(128, centroid, 42);
 let codes: Vec<_> = vectors.iter().map(|v| rq.encode_multibit(v, 4)).collect();
 let rq_query = rq.encode_query(&query);
-// Rerank candidates with 4-bit asymmetric distance...
+let topk = palace_quant::rabitq::rabitq_topk(&rq, &rq_query, &codes, 10);
 ```
 
 <br/>
@@ -220,10 +220,20 @@ let rq_query = rq.encode_query(&query);
 |--------|------------|-----------------|-------------|
 | Naive binary | D/8 B | 15.5% | Sign-bit quantization + Hamming |
 | RaBitQ 1-bit | D/8 + 16 B | 54.0% | Random rotation + scalar correction |
-| RaBitQ 4-bit | D/2 + 16 B | 54.0%* | 4 bit-planes + asymmetric distance |
+| RaBitQ 4-bit | D/2 + 16 B | TBD | 4 bit-planes + weighted popcount |
 | Full FP32 | D×4 B | 100.0% | Brute-force baseline |
 
-\* RaBitQ 4-bit currently uses only the MSB sign plane for distance estimation, so recall matches 1-bit. Multi-bit distance computation is planned for v0.2.
+#### v0.2: Multi-bit Distance Estimation
+
+RaBitQ 4-bit now uses **weighted bit-plane inner product** instead of only the MSB sign plane:
+
+```
+⟨x_recon, q'⟩ = (1/half_max) · [Σ_k 2^k · plane_ip_k - half_max · Σ q'_i]
+```
+
+where `plane_ip_k = Σ_i bit_k[i] · q'[i]` is the inner product per bit-plane (k=0..3),
+and `half_max = 7.5` maps quantized [0,15] back to [-1,+1]. The x0 quality factor
+now reflects multi-bit reconstruction fidelity, giving tighter error bounds.
 
 RaBitQ uses a Fast Hadamard Transform (FHT) for O(D log D) random rotation instead of O(D²) matrix multiplication. The asymmetric distance formula `est_ip = norm/(x0·√D) · ⟨x_bar, q'⟩` keeps the query unquantized for higher accuracy.
 

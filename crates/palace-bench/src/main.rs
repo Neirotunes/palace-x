@@ -406,6 +406,33 @@ fn bench_sift(limit: Option<usize>) {
         let res = hnsw.search(q, Some(256));
         res.into_iter().map(|(id, _)| id.0 as usize).collect()
     }, "D×4+graph");
+
+    // === RaBitQ 1-bit vs 4-bit ===
+    println!("\n  Building RaBitQ indices (1-bit and 4-bit)...");
+    let rabitq = palace_quant::rabitq::RaBitQIndex::new(dims, 42);
+
+    let codes_1bit: Vec<palace_quant::rabitq::RaBitQCode> = base_vectors.iter()
+        .map(|v| rabitq.encode(v))
+        .collect();
+    let codes_4bit: Vec<palace_quant::rabitq::RaBitQCode> = base_vectors.iter()
+        .map(|v| rabitq.encode_multibit(v, 4))
+        .collect();
+
+    println!("  RaBitQ encoded. Measuring recall...\n");
+
+    // Measure recall for RaBitQ 1-bit
+    run_bench("RaBitQ 1-bit (topk=10)", &|q| {
+        let rq = rabitq.encode_query(q);
+        let results = palace_quant::rabitq::rabitq_topk(&rabitq, &rq, &codes_1bit, 10);
+        results.into_iter().map(|(idx, _)| idx).collect()
+    }, "D/64 + factors");
+
+    // Measure recall for RaBitQ 4-bit
+    run_bench("RaBitQ 4-bit (topk=10)", &|q| {
+        let rq = rabitq.encode_query(q);
+        let results = palace_quant::rabitq::rabitq_topk(&rabitq, &rq, &codes_4bit, 10);
+        results.into_iter().map(|(idx, _)| idx).collect()
+    }, "D/16 + factors");
 }
 
 fn bench_full_pipeline(dims: usize, n_vectors: usize) {
