@@ -7,9 +7,11 @@
 //! (arXiv:2412.01940) with Hub-Highway optimization for the Palace-X project.
 
 pub mod heuristic;
+pub mod hnsw;
 pub mod node;
 pub mod nsw;
 
+pub use hnsw::{HnswDistanceMetric, HnswIndex};
 pub use node::{GraphNode, MetaData};
 pub use nsw::{DistanceMetric, NswIndex};
 pub use palace_core::NodeId;

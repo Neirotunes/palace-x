@@ -15,7 +15,7 @@ use std::time::Instant;
 
 use palace_bitplane::planes::BitPlaneVector;
 use palace_core::{MemoryProvider, MetaData, NodeId, SearchConfig};
-use palace_graph::{MetaData as GraphMetaData, NswIndex};
+use palace_graph::{HnswIndex, MetaData as GraphMetaData, NswIndex};
 use palace_quant::{batch, binary, cosine, hamming};
 use palace_storage::MemoryPalace;
 use palace_topo::{betti, ego_graph::EgoGraph, metric};
@@ -376,6 +376,34 @@ fn bench_sift(limit: Option<usize>) {
 
     run_bench("NSW L2 (ef=128)", &|q| {
         let res = nsw_l2_alpha.search(q, Some(128));
+        res.into_iter().map(|(id, _)| id.0 as usize).collect()
+    }, "D×4+graph");
+
+    // === HNSW ===
+    println!("\n  Building HNSW index (M=16, ef_c=200)...");
+    let hnsw = HnswIndex::new(dims, 16, 200);
+    for (i, v) in base_vectors.iter().enumerate() {
+        hnsw.insert(v.clone(), GraphMetaData { label: format!("{}", i) });
+    }
+    println!("  HNSW built. Running searches...\n");
+
+    run_bench("HNSW L2 (ef=32)", &|q| {
+        let res = hnsw.search(q, Some(32));
+        res.into_iter().map(|(id, _)| id.0 as usize).collect()
+    }, "D×4+graph");
+
+    run_bench("HNSW L2 (ef=64)", &|q| {
+        let res = hnsw.search(q, Some(64));
+        res.into_iter().map(|(id, _)| id.0 as usize).collect()
+    }, "D×4+graph");
+
+    run_bench("HNSW L2 (ef=128)", &|q| {
+        let res = hnsw.search(q, Some(128));
+        res.into_iter().map(|(id, _)| id.0 as usize).collect()
+    }, "D×4+graph");
+
+    run_bench("HNSW L2 (ef=256)", &|q| {
+        let res = hnsw.search(q, Some(256));
         res.into_iter().map(|(id, _)| id.0 as usize).collect()
     }, "D×4+graph");
 }
