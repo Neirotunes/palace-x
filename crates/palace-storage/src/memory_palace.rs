@@ -1,4 +1,4 @@
-// Copyright (c) 2026 M.Diach <max@neirosynth.com>
+// Copyright (c) 2026 Maksym Dyachenko <max@neirosynth.com>
 // Proprietary — All Rights Reserved
 
 //! Core MemoryProvider implementation: MemoryPalace
