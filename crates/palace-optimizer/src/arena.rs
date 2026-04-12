@@ -39,23 +39,37 @@ impl UmaArena {
     }
 
     /// Raw allocation of n bytes with specified alignment.
+    ///
+    /// Returns `None` if the arena is full or alignment arithmetic overflows.
+    /// Uses a bounded CAS retry loop (max 256 attempts) to avoid stack overflow
+    /// under high contention.
     pub fn alloc_raw(&self, size: usize, align: usize) -> Option<*mut u8> {
-        let current_offset = self.offset.load(Ordering::Relaxed);
-        let aligned_offset = (current_offset + align - 1) & !(align - 1);
+        // Bounded retry loop instead of recursive CAS (prevents stack overflow)
+        for _ in 0..256 {
+            let current_offset = self.offset.load(Ordering::Acquire);
 
-        if aligned_offset + size > self.capacity {
-            return None;
-        }
+            // Checked alignment arithmetic to prevent overflow wrapping
+            let aligned_offset = current_offset
+                .checked_add(align - 1)
+                .map(|v| v & !(align - 1))?;
 
-        match self.offset.compare_exchange_weak(
-            current_offset,
-            aligned_offset + size,
-            Ordering::Relaxed,
-            Ordering::Relaxed,
-        ) {
-            Ok(_) => Some(unsafe { self.base.add(aligned_offset) }),
-            Err(_) => self.alloc_raw(size, align),
+            let new_offset = aligned_offset.checked_add(size)?;
+
+            if new_offset > self.capacity {
+                return None;
+            }
+
+            match self.offset.compare_exchange_weak(
+                current_offset,
+                new_offset,
+                Ordering::Release,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return Some(unsafe { self.base.add(aligned_offset) }),
+                Err(_) => continue, // CAS failed, retry
+            }
         }
+        None // Exceeded retry limit under extreme contention
     }
 
     /// Lock-free bump allocation - O(1), no mutexes.

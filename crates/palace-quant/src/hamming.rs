@@ -21,7 +21,7 @@ static BACKEND_CACHE: AtomicU8 = AtomicU8::new(0); // 0 = undetected, 1 = scalar
 /// Scalar Hamming distance using u64::count_ones()
 #[inline]
 fn hamming_scalar(a: &[u64], b: &[u64]) -> u32 {
-    debug_assert_eq!(a.len(), b.len(), "Input slices must have equal length");
+    assert_eq!(a.len(), b.len(), "Input slices must have equal length");
     a.iter()
         .zip(b.iter())
         .map(|(x, y)| (x ^ y).count_ones())
@@ -35,7 +35,7 @@ fn hamming_scalar(a: &[u64], b: &[u64]) -> u32 {
 unsafe fn hamming_avx512(a: &[u64], b: &[u64]) -> u32 {
     use std::arch::x86_64::*;
 
-    debug_assert_eq!(a.len(), b.len(), "Input slices must have equal length");
+    assert_eq!(a.len(), b.len(), "Input slices must have equal length");
 
     let mut sum: u64 = 0;
     let mut i = 0;
@@ -67,7 +67,7 @@ unsafe fn hamming_avx512(a: &[u64], b: &[u64]) -> u32 {
 unsafe fn hamming_neon(a: &[u64], b: &[u64]) -> u32 {
     use std::arch::aarch64::*;
 
-    debug_assert_eq!(a.len(), b.len(), "Input slices must have equal length");
+    assert_eq!(a.len(), b.len(), "Input slices must have equal length");
 
     let mut i = 0usize;
     let len = a.len();

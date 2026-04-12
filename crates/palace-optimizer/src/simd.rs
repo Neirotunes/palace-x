@@ -14,6 +14,12 @@ pub struct ParticleSoA {
 
 /// Updates positions of particles using NEON intrinsics.
 /// Processes 4 f32 values (2 particles x 2D or 4 particles x 1D) per iteration.
+///
+/// # Safety
+/// All slices must have the same length. Caller must ensure this.
+///
+/// # Panics
+/// Panics if slice lengths are mismatched.
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 pub unsafe fn update_particles_neon(
@@ -23,8 +29,13 @@ pub unsafe fn update_particles_neon(
     vel_y: &[f32],
     dt: f32,
 ) {
+    let n = pos_x.len();
+    assert_eq!(pos_y.len(), n, "pos_y length mismatch");
+    assert_eq!(vel_x.len(), n, "vel_x length mismatch");
+    assert_eq!(vel_y.len(), n, "vel_y length mismatch");
+
     let delta = vdupq_n_f32(dt);
-    let chunks = pos_x.len() / 4;
+    let chunks = n / 4;
 
     for i in 0..chunks {
         let idx = i * 4;
@@ -53,6 +64,12 @@ pub unsafe fn update_particles_neon(
 
 /// Frustum culling for 4 spheres at a time using NEON.
 /// Returns a bitmask where each bit represents visibility.
+///
+/// # Safety
+/// All slices must have the same length.
+///
+/// # Panics
+/// Panics if slice lengths are mismatched or length exceeds 32 (bitmask capacity).
 #[cfg(target_arch = "aarch64")]
 pub unsafe fn sphere_frustum_cull_neon(
     cx: &[f32],
@@ -61,6 +78,11 @@ pub unsafe fn sphere_frustum_cull_neon(
     radii: &[f32],
     plane: [f32; 4], // nx, ny, nz, d
 ) -> u32 {
+    let n = cx.len();
+    assert_eq!(cy.len(), n, "cy length mismatch");
+    assert_eq!(cz.len(), n, "cz length mismatch");
+    assert_eq!(radii.len(), n, "radii length mismatch");
+    assert!(n <= 32, "sphere_frustum_cull_neon: max 32 spheres (bitmask is u32)");
     let nx = vdupq_n_f32(plane[0]);
     let ny = vdupq_n_f32(plane[1]);
     let nz = vdupq_n_f32(plane[2]);
@@ -104,8 +126,15 @@ pub unsafe fn sphere_frustum_cull_neon(
 }
 
 /// Computes the dot product of two vectors using NEON.
+///
+/// # Safety
+/// Both slices must have the same length.
+///
+/// # Panics
+/// Panics if slice lengths differ.
 #[cfg(target_arch = "aarch64")]
 pub unsafe fn dot_product_neon(a: &[f32], b: &[f32]) -> f32 {
+    assert_eq!(a.len(), b.len(), "dot_product_neon: length mismatch ({} vs {})", a.len(), b.len());
     let mut sumv = vdupq_n_f32(0.0);
     let chunks = a.len() / 4;
 

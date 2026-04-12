@@ -267,9 +267,11 @@ impl HnswIndex {
 
                     // Step 2: prune if over capacity (no concurrent lock held)
                     if needs_prune {
-                        let (neighbor_vec, nb_ids) = {
-                            let nr = self.nodes.get(&neighbor_id).unwrap();
-                            (nr.vector.clone(), nr.neighbors[lc].clone())
+                        // Gracefully handle concurrent deletion — node may have been
+                        // removed between releasing get_mut and this read.
+                        let (neighbor_vec, nb_ids) = match self.nodes.get(&neighbor_id) {
+                            Some(nr) => (nr.vector.clone(), nr.neighbors[lc].clone()),
+                            None => continue, // Node deleted concurrently, skip pruning
                         };
                         // Now compute distances without holding any DashMap ref
                         let nb_list: Vec<(NodeId, f32)> = nb_ids
@@ -294,9 +296,16 @@ impl HnswIndex {
             }
 
             // Update entry point if new node has higher level
+            // Use write lock to make the (entry_point, max_level) update atomic
+            // preventing race conditions between concurrent inserts
             if level > ep_level {
-                *self.entry_point.write() = Some(id);
-                self.max_level.store(level, AtomicOrdering::Relaxed);
+                let mut ep_guard = self.entry_point.write();
+                // Double-check under lock: another thread may have raised max_level
+                let current_max = self.max_level.load(AtomicOrdering::Acquire);
+                if level > current_max {
+                    *ep_guard = Some(id);
+                    self.max_level.store(level, AtomicOrdering::Release);
+                }
             }
         } else {
             // First node — set as entry point
@@ -419,9 +428,13 @@ impl HnswIndex {
         results
     }
 
-    /// α-RNG neighbor selection heuristic
+    /// α-RNG neighbor selection heuristic (Vamana-style)
+    ///
     /// Prefers close AND diverse neighbors. A candidate is accepted if:
-    /// dist(candidate, query) <= alpha * dist(candidate, any_selected)
+    ///   dist(candidate, query) <= alpha * dist(candidate, any_selected)
+    ///
+    /// Uses the same metric as graph construction (`self.dist()`) to ensure
+    /// the α threshold is scale-consistent regardless of L2 vs Cosine metric.
     fn select_neighbors_heuristic(
         &self,
         _query: &[f32],
@@ -457,10 +470,12 @@ impl HnswIndex {
             }
 
             // α-RNG check: is this candidate diverse enough?
+            // Uses self.dist() (same metric as construction) so the α threshold
+            // is scale-consistent for both L2 (unbounded) and Cosine ([0,2]).
             let mut is_diverse = true;
             for sv in &selected_vecs {
                 let dist_to_selected = self.dist(&cand_vec, sv);
-                if *cand_dist > self.alpha * dist_to_selected {
+                if dist_to_selected > 0.0 && *cand_dist > self.alpha * dist_to_selected {
                     is_diverse = false;
                     break;
                 }
@@ -489,8 +504,15 @@ impl HnswIndex {
 
     /// Search the HNSW index for nearest neighbors
     ///
-    /// Returns Vec<(NodeId, f32)> sorted by distance ascending
+    /// Returns Vec<(NodeId, f32)> sorted by distance ascending.
+    /// Panics in debug builds if `publish_snapshot()` has not been called
+    /// (snapshot is used by `get_neighbors` for ego-graph extraction).
     pub fn search(&self, query: &[f32], ef: Option<usize>) -> Vec<(NodeId, f32)> {
+        debug_assert!(
+            !self.nodes.is_empty() || self.read_snapshot.load().is_empty(),
+            "HNSW: search called on non-empty index without publish_snapshot(). \
+             Call publish_snapshot() after batch insertion."
+        );
         let ef = ef.unwrap_or(self.ef_search.load(AtomicOrdering::Relaxed));
 
         let ep = match self.entry_point.read().clone() {

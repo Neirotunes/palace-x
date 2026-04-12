@@ -68,7 +68,7 @@ impl FastRotation {
     /// Apply the rotation to a vector (in-place on padded buffer).
     /// Returns the rotated vector truncated to original dimension.
     pub fn rotate(&self, input: &[f32]) -> Vec<f32> {
-        debug_assert_eq!(input.len(), self.dim);
+        assert_eq!(input.len(), self.dim, "RaBitQ: input dimension mismatch");
 
         // Pad to power-of-2
         let mut buf = vec![0.0f32; self.padded_dim];
@@ -98,7 +98,7 @@ impl FastRotation {
 /// Operates on a slice whose length must be a power of 2.
 fn fast_hadamard_transform(v: &mut [f32]) {
     let n = v.len();
-    debug_assert!(n.is_power_of_two(), "FHT requires power-of-2 length");
+    assert!(n.is_power_of_two(), "FHT requires power-of-2 length");
 
     let mut h = 1;
     while h < n {
@@ -179,7 +179,7 @@ impl RaBitQIndex {
 
     /// Create a new RaBitQ index with a precomputed centroid.
     pub fn with_centroid(dim: usize, centroid: Vec<f32>, seed: u64) -> Self {
-        debug_assert_eq!(centroid.len(), dim);
+        assert_eq!(centroid.len(), dim, "RaBitQ: centroid dimension mismatch");
         Self {
             rotation: FastRotation::new(dim, seed),
             centroid,
@@ -189,7 +189,7 @@ impl RaBitQIndex {
 
     /// Update centroid (e.g., after computing mean of dataset).
     pub fn set_centroid(&mut self, centroid: Vec<f32>) {
-        debug_assert_eq!(centroid.len(), self.dim);
+        assert_eq!(centroid.len(), self.dim, "RaBitQ: centroid dimension mismatch");
         self.centroid = centroid;
     }
 
@@ -209,8 +209,8 @@ impl RaBitQIndex {
     /// * `vector` - Data vector to encode
     /// * `bits` - Number of bits per dimension (1 or 4 supported)
     pub fn encode_multibit(&self, vector: &[f32], bits: u8) -> RaBitQCode {
-        debug_assert_eq!(vector.len(), self.dim);
-        debug_assert!(bits == 1 || bits == 4 || bits == 7, "Unsupported bit-depth");
+        assert_eq!(vector.len(), self.dim, "RaBitQ: vector dimension mismatch");
+        assert!(bits == 1 || bits == 4 || bits == 7, "RaBitQ: unsupported bit-depth {}, expected 1, 4, or 7", bits);
 
         // Step 1: Residual from centroid
         let residual: Vec<f32> = vector
@@ -313,7 +313,7 @@ impl RaBitQIndex {
     /// The query residual is rotated WITHOUT normalization — the magnitude
     /// must be preserved for correct asymmetric distance estimation.
     pub fn encode_query(&self, query: &[f32]) -> RaBitQQuery {
-        debug_assert_eq!(query.len(), self.dim);
+        assert_eq!(query.len(), self.dim, "RaBitQ: query dimension mismatch");
 
         let residual: Vec<f32> = query
             .iter()

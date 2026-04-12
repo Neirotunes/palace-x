@@ -81,7 +81,7 @@ fn quantize_to_binary(vector: &[f32]) -> Vec<u64> {
 /// Computes cosine distance between two vectors
 /// Returns a value in [0, 2], where 0 means identical and 2 means opposite
 pub fn cosine_distance(a: &[f32], b: &[f32]) -> f32 {
-    debug_assert_eq!(a.len(), b.len(), "Vectors must have the same length");
+    assert_eq!(a.len(), b.len(), "Vectors must have the same length");
 
     let mut dot_product = 0.0;
     let mut norm_a = 0.0;
@@ -108,7 +108,7 @@ pub fn cosine_distance(a: &[f32], b: &[f32]) -> f32 {
 
 /// Computes Hamming distance between two binary vectors
 pub fn hamming_distance(a: &[u64], b: &[u64]) -> u32 {
-    debug_assert_eq!(a.len(), b.len(), "Binary vectors must have the same length");
+    assert_eq!(a.len(), b.len(), "Binary vectors must have the same length");
 
     a.iter()
         .zip(b.iter())
