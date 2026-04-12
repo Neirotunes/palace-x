@@ -9,7 +9,7 @@
 /// Compute dot product of two f32 vectors
 #[inline]
 fn dot_product(a: &[f32], b: &[f32]) -> f32 {
-    debug_assert_eq!(a.len(), b.len(), "Input vectors must have equal length");
+    assert_eq!(a.len(), b.len(), "Input vectors must have equal length");
     a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
 }
 
@@ -32,7 +32,7 @@ fn norm_l2(v: &[f32]) -> f32 {
 /// # Returns
 /// Cosine distance in range [0, 2]
 pub fn cosine_distance(a: &[f32], b: &[f32]) -> f32 {
-    debug_assert_eq!(a.len(), b.len(), "Input vectors must have equal length");
+    assert_eq!(a.len(), b.len(), "Input vectors must have equal length");
 
     let norm_a = norm_l2(a);
     let norm_b = norm_l2(b);
@@ -60,7 +60,7 @@ pub fn cosine_distance(a: &[f32], b: &[f32]) -> f32 {
 /// # Returns
 /// Cosine similarity in range [-1, 1]
 pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-    debug_assert_eq!(a.len(), b.len(), "Input vectors must have equal length");
+    assert_eq!(a.len(), b.len(), "Input vectors must have equal length");
 
     let norm_a = norm_l2(a);
     let norm_b = norm_l2(b);

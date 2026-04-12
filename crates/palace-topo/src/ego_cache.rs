@@ -39,24 +39,37 @@ impl EgoCache {
         }
     }
 
-    /// Try to get a cached ego-graph (read-only fast path).
+    /// Try to get a cached ego-graph, updating LRU access time on hit.
     pub fn get(&self, node_id: NodeId) -> Option<EgoGraph> {
-        let entries = self.entries.read();
-        if let Some(entry) = entries.get(&node_id) {
+        // First try read lock for the common case (cache hit without LRU update race)
+        {
+            let entries = self.entries.read();
+            if entries.get(&node_id).is_none() {
+                drop(entries);
+                self.misses.fetch_add(1, Ordering::Relaxed);
+                return None;
+            }
+        }
+        // Upgrade to write lock to update last_access (fixes LRU eviction)
+        let mut entries = self.entries.write();
+        if let Some(entry) = entries.get_mut(&node_id) {
+            entry.last_access = self.clock.fetch_add(1, Ordering::Relaxed);
             self.hits.fetch_add(1, Ordering::Relaxed);
             return Some(entry.ego.clone());
         }
-        drop(entries);
+        // Entry removed between read and write lock — treat as miss
         self.misses.fetch_add(1, Ordering::Relaxed);
         None
     }
 
     /// Store an ego-graph, evicting LRU entry if at capacity.
+    /// Uses single write lock to eliminate TOCTOU race between capacity check and insert.
     pub fn put(&self, node_id: NodeId, ego: EgoGraph) {
         let tick = self.clock.fetch_add(1, Ordering::Relaxed);
         let mut entries = self.entries.write();
 
-        if entries.len() >= self.capacity && !entries.contains_key(&node_id) {
+        // Atomic check-and-evict under the same write lock (no TOCTOU)
+        if !entries.contains_key(&node_id) && entries.len() >= self.capacity {
             if let Some((&oldest_id, _)) = entries.iter().min_by_key(|(_, e)| e.last_access) {
                 entries.remove(&oldest_id);
             }

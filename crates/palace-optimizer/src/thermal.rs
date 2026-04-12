@@ -21,15 +21,19 @@ impl ThermalGuard {
     }
 
     /// Checks temperature and returns whether we should throttle.
+    ///
+    /// Uses Acquire/Release memory ordering to ensure consistent visibility
+    /// of throttle state across cores (critical on ARM where Relaxed loads
+    /// can observe stale values from other cores' store buffers).
     pub fn should_throttle(&self) -> bool {
         let temp = self.read_temperature();
-        let is_throttled = self.throttle_active.load(Ordering::Relaxed);
+        let is_throttled = self.throttle_active.load(Ordering::Acquire);
 
         if temp > self.threshold_celsius && !is_throttled {
-            self.throttle_active.store(true, Ordering::SeqCst);
+            self.throttle_active.store(true, Ordering::Release);
             true
         } else if temp < (self.threshold_celsius - self.hysteresis) && is_throttled {
-            self.throttle_active.store(false, Ordering::SeqCst);
+            self.throttle_active.store(false, Ordering::Release);
             false
         } else {
             is_throttled
