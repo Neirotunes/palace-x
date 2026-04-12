@@ -2,7 +2,7 @@
 
 **Codename: HIERARCHY**
 **Target: SOTA 2027 / DARPA TRL-5 / Edge AI Vector Search**
-**Author: M. Diach / Neirotunes**
+**Author: Maksym Dyachenko / Neirotunes**
 **Date: April 2026**
 
 ---
