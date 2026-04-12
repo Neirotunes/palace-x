@@ -59,7 +59,7 @@ using namespace metal;
 ///   buffer(2) = distances    [num_candidates floats, output]
 ///   buffer(3) = params       {dims: uint, num_candidates: uint}
 ///
-/// Each threadgroup computes dist(query, candidates[gid.y]).
+/// Each threadgroup computes dist(query, candidates[group_id]).
 /// Threads within the group each handle a slice of dimensions,
 /// then reduce via threadgroup shared memory.
 kernel void batch_l2_distance(
@@ -67,13 +67,12 @@ kernel void batch_l2_distance(
     device const float*  candidates   [[buffer(1)]],
     device       float*  distances    [[buffer(2)]],
     constant     uint2&  params       [[buffer(3)]],   // (dims, num_candidates)
-    uint2                gid          [[thread_position_in_grid]],
+    uint                 cand_idx     [[threadgroup_position_in_grid]],
     uint                 tid          [[thread_index_in_threadgroup]],
     uint                 tg_size      [[threads_per_threadgroup]])
 {
     uint dims           = params.x;
     uint num_candidates = params.y;
-    uint cand_idx       = gid.y;
 
     if (cand_idx >= num_candidates) return;
 
@@ -111,13 +110,12 @@ kernel void batch_cosine_distance(
     device const float*  candidates   [[buffer(1)]],
     device       float*  distances    [[buffer(2)]],
     constant     uint2&  params       [[buffer(3)]],
-    uint2                gid          [[thread_position_in_grid]],
+    uint                 cand_idx     [[threadgroup_position_in_grid]],
     uint                 tid          [[thread_index_in_threadgroup]],
     uint                 tg_size      [[threads_per_threadgroup]])
 {
     uint dims           = params.x;
     uint num_candidates = params.y;
-    uint cand_idx       = gid.y;
 
     if (cand_idx >= num_candidates) return;
 
@@ -311,22 +309,20 @@ impl MetalBatchSearch {
             encoder.set_buffer(2, Some(&dist_buf), 0);
             encoder.set_buffer(3, Some(&params_buf), 0);
 
-            // Threadgroup sizing:
-            // - X dimension: threads cooperate on dimension reduction (up to 256)
-            // - Y dimension: one row per candidate
+            // 1D dispatch: one threadgroup per candidate, threads cooperate on dims
             let tg_width = MAX_THREADGROUP_DIM.min(dims as u64);
             let threads_per_group = MTLSize {
                 width: tg_width,
                 height: 1,
                 depth: 1,
             };
-            let grid_size = MTLSize {
-                width: tg_width,
-                height: num_candidates as u64,
+            let num_threadgroups = MTLSize {
+                width: num_candidates as u64,
+                height: 1,
                 depth: 1,
             };
 
-            encoder.dispatch_threads(grid_size, threads_per_group);
+            encoder.dispatch_thread_groups(num_threadgroups, threads_per_group);
             encoder.end_encoding();
 
             command_buffer.commit();
