@@ -10,14 +10,14 @@
 //! - DashMap for concurrent writes, ArcSwap snapshot for wait-free reads
 //! - DistanceMetric dispatch: L2 for raw features (SIFT), Cosine for embeddings
 
-use crate::node::{cosine_distance, hamming_distance, GraphNode, MetaData};
+use crate::node::{cosine_distance, hamming_distance, MetaData};
 use arc_swap::ArcSwap;
 use dashmap::DashMap;
 use palace_core::NodeId;
 use parking_lot::RwLock;
 use rand::Rng;
 use std::cmp::Ordering;
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::collections::{BinaryHeap, HashSet};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::Arc;
 
@@ -250,22 +250,37 @@ impl HnswIndex {
 
                 // Add bidirectional connections and prune if needed
                 for &neighbor_id in &selected {
-                    if let Some(mut neighbor_ref) = self.nodes.get_mut(&neighbor_id) {
+                    // Step 1: add connection, check if pruning needed
+                    let needs_prune = if let Some(mut neighbor_ref) = self.nodes.get_mut(&neighbor_id) {
                         if lc < neighbor_ref.neighbors.len() {
                             if !neighbor_ref.neighbors[lc].contains(&id) {
                                 neighbor_ref.neighbors[lc].push(id);
                             }
+                            neighbor_ref.neighbors[lc].len() > max_m
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+                    // get_mut dropped here — safe to read other nodes
 
-                            // Prune if over capacity
-                            if neighbor_ref.neighbors[lc].len() > max_m {
-                                let neighbor_vec = neighbor_ref.vector.clone();
-                                let nb_list: Vec<(NodeId, f32)> = neighbor_ref.neighbors[lc]
-                                    .iter()
-                                    .filter_map(|&nid| {
-                                        self.nodes.get(&nid).map(|n| (nid, self.dist(&neighbor_vec, &n.vector)))
-                                    })
-                                    .collect();
-                                let pruned = self.select_neighbors_heuristic(&neighbor_vec, &nb_list, max_m, lc);
+                    // Step 2: prune if over capacity (no concurrent lock held)
+                    if needs_prune {
+                        let (neighbor_vec, nb_ids) = {
+                            let nr = self.nodes.get(&neighbor_id).unwrap();
+                            (nr.vector.clone(), nr.neighbors[lc].clone())
+                        };
+                        // Now compute distances without holding any DashMap ref
+                        let nb_list: Vec<(NodeId, f32)> = nb_ids
+                            .iter()
+                            .filter_map(|&nid| {
+                                self.nodes.get(&nid).map(|n| (nid, self.dist(&neighbor_vec, &n.vector)))
+                            })
+                            .collect();
+                        let pruned = self.select_neighbors_heuristic(&neighbor_vec, &nb_list, max_m, lc);
+                        if let Some(mut neighbor_ref) = self.nodes.get_mut(&neighbor_id) {
+                            if lc < neighbor_ref.neighbors.len() {
                                 neighbor_ref.neighbors[lc] = pruned;
                             }
                         }
@@ -289,8 +304,8 @@ impl HnswIndex {
             self.max_level.store(level, AtomicOrdering::Relaxed);
         }
 
-        // Publish snapshot for wait-free reads
-        self.publish_snapshot();
+        // NOTE: snapshot not published per-insert for performance.
+        // Call publish_snapshot() after batch insertion is complete.
         id
     }
 
@@ -409,7 +424,7 @@ impl HnswIndex {
     /// dist(candidate, query) <= alpha * dist(candidate, any_selected)
     fn select_neighbors_heuristic(
         &self,
-        query: &[f32],
+        _query: &[f32],
         candidates: &[(NodeId, f32)],
         max_neighbors: usize,
         _layer: usize,
@@ -661,6 +676,7 @@ mod tests {
             vectors.push(v.clone());
             index.insert(v, MetaData { label: format!("{}", i) });
         }
+        index.publish_snapshot();
 
         // Each vector should find itself as closest
         let mut self_recall = 0;
@@ -689,6 +705,7 @@ mod tests {
             vectors.push(v.clone());
             index.insert(v, MetaData { label: format!("{}", i) });
         }
+        index.publish_snapshot();
 
         // Compute brute-force ground truth for first 20 queries
         let queries: Vec<Vec<f32>> = (0..20).map(|i| random_vector(64, i + 5000)).collect();
@@ -735,6 +752,7 @@ mod tests {
         let index = HnswIndex::new(64, 16, 100);
         let v = random_vector(64, 42);
         let id = index.insert(v.clone(), MetaData { label: "only".into() });
+        index.publish_snapshot();
         let results = index.search(&v, Some(10));
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0, id);
@@ -748,6 +766,7 @@ mod tests {
             let v = random_vector(128, i);
             index.insert(v, MetaData { label: format!("{}", i) });
         }
+        index.publish_snapshot();
 
         let query = random_vector(128, 9999);
         let query_bin = quantize_binary(&query);
@@ -762,6 +781,7 @@ mod tests {
             let v = random_vector(64, i);
             index.insert(v, MetaData { label: format!("{}", i) });
         }
+        index.publish_snapshot();
 
         let neighbors = index.get_neighbors(NodeId(0), 1);
         assert!(!neighbors.is_empty(), "Node 0 should have neighbors");
