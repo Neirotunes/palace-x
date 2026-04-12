@@ -14,5 +14,6 @@ palace-topo = { workspace = true }
 palace-bitplane = { workspace = true }
 palace-storage = { workspace = true }
 palace-engine = { workspace = true }
+palace-optimizer = { workspace = true }
 tokio = { workspace = true }
 rand = { workspace = true }

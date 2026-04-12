@@ -532,6 +532,72 @@ fn bench_full_pipeline(dims: usize, n_vectors: usize) {
     println!("    Max Hub:   {:.4}", stats.max_hub_score);
 }
 
+// ─── Metal GPU Batch Distance Benchmark ───────────────────────────
+
+fn bench_metal_batch(dims: usize) {
+    use palace_optimizer::metal_batch::{MetalBatchSearch, MetalDistanceMetric, gpu_rerank};
+
+    println!("\n═══ Metal GPU Batch Distance (L2 + Cosine) ═══");
+
+    let gpu = match MetalBatchSearch::new() {
+        Some(g) => {
+            println!("  GPU: {}", g.device_name());
+            g
+        }
+        None => {
+            println!("  Metal not available — skipping GPU bench");
+            return;
+        }
+    };
+
+    let mut rng = rand::thread_rng();
+    let query: Vec<f32> = random_vector(&mut rng, dims);
+
+    println!("  ┌──────────────────┬──────────┬───────────┬───────────┐");
+    println!("  │ Candidates       │ GPU (μs) │ CPU (μs)  │ Speedup   │");
+    println!("  ├──────────────────┼──────────┼───────────┼───────────┤");
+
+    for &n in &[256, 1_000, 4_000, 16_000, 64_000] {
+        let candidates: Vec<f32> = (0..n * dims).map(|_| rng.gen::<f32>() * 2.0 - 1.0).collect();
+
+        // GPU path
+        let iterations = if n <= 1000 { 100 } else { 20 };
+        let start = Instant::now();
+        for _ in 0..iterations {
+            let _ = gpu.batch_distances(&query, &candidates, dims, MetalDistanceMetric::L2);
+        }
+        let gpu_us = start.elapsed().as_micros() as f64 / iterations as f64;
+
+        // CPU path (scalar fallback via gpu_rerank with None)
+        let start = Instant::now();
+        for _ in 0..iterations {
+            let _ = gpu_rerank(None, &query, &candidates, dims, MetalDistanceMetric::L2, 10);
+        }
+        let cpu_us = start.elapsed().as_micros() as f64 / iterations as f64;
+
+        let speedup = cpu_us / gpu_us.max(1.0);
+        println!(
+            "  │ {:>6} × {:>4}d   │ {:>8.0} │ {:>9.0} │ {:>7.1}x  │",
+            n, dims, gpu_us, cpu_us, speedup
+        );
+    }
+
+    println!("  └──────────────────┴──────────┴───────────┴───────────┘");
+
+    // Cosine metric quick check
+    let n = 4_000;
+    let candidates: Vec<f32> = (0..n * dims).map(|_| rng.gen::<f32>() * 2.0 - 1.0).collect();
+    let start = Instant::now();
+    for _ in 0..50 {
+        let _ = gpu.batch_distances(&query, &candidates, dims, MetalDistanceMetric::Cosine);
+    }
+    let cosine_us = start.elapsed().as_micros() as f64 / 50.0;
+    println!("  Cosine 4K×{}d: {:.0} μs/batch", dims, cosine_us);
+
+    let (dispatches, processed) = gpu.stats();
+    println!("  Total dispatches: {}, vectors processed: {}", dispatches, processed);
+}
+
 // ─── UMA Cache-Aware HNSW Benchmark ───────────────────────────────
 
 fn bench_uma_hnsw(dims: usize, n: usize) {
@@ -658,6 +724,7 @@ fn main() {
 
     if !sift_only {
         let dims = 384;
+        bench_metal_batch(dims);
         bench_uma_hnsw(dims, 5_000);
         bench_full_pipeline(dims, 5_000);
 

@@ -237,6 +237,19 @@ now reflects multi-bit reconstruction fidelity, giving tighter error bounds.
 
 RaBitQ uses a Fast Hadamard Transform (FHT) for O(D log D) random rotation instead of O(D²) matrix multiplication. The asymmetric distance formula `est_ip = norm/(x0·√D) · ⟨x_bar, q'⟩` keeps the query unquantized for higher accuracy.
 
+#### v0.2: UMA Cache-Aware HNSW + Metal GPU Batch Search
+
+**Hot/Cold Tier Layout** — Upper HNSW layers (levels 1+) are packed into contiguous `Vec<f32>` sorted by level descending, fitting in Apple Silicon's L2/SLC cache (~16-48 MB). Layer 0 stays in DashMap for concurrent writes. ARM64 `prfm pldl1keep` prefetch hints are issued 1 hop ahead during greedy descent, hiding ~100ns DRAM latency.
+
+**Metal GPU Batch Distance** — When candidate set ≥ 256 vectors, L2/Cosine distances are computed in a single GPU dispatch via Metal compute shaders. Each threadgroup (up to 256 threads) processes one candidate, with shared-memory tree reduction. On UMA (Apple Silicon), query and candidate buffers are `StorageModeShared` — zero PCIe copy overhead.
+
+```
+CPU ──[query + candidates]──▶ GPU Metal kernel ──[distances[]]──▶ CPU top-k select
+         shared UMA buffer              zero-copy              shared UMA buffer
+```
+
+The `gpu_rerank()` function auto-selects GPU or CPU path based on candidate count threshold.
+
 <br/>
 
 ## Persistent Homology
