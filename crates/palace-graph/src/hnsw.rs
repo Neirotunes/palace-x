@@ -657,6 +657,71 @@ impl HnswIndex {
     pub fn get_label(&self, id: &NodeId) -> Option<String> {
         self.nodes.get(id).map(|n| n.metadata.label.clone())
     }
+
+    // ── UMA-HNSW accessor methods ─────────────────────────────────────
+    // These expose internal state needed by the cache-aware search path
+    // in `uma_hnsw.rs`. They use the read snapshot for wait-free access.
+
+    /// Load the immutable read snapshot (wait-free, Arc-guarded).
+    ///
+    /// Used by `HotTierStore::from_hnsw` to iterate upper-layer nodes
+    /// without blocking concurrent writers.
+    pub fn snapshot_ref(&self) -> arc_swap::Guard<Arc<im::HashMap<NodeId, HnswNode>>> {
+        self.read_snapshot.load()
+    }
+
+    /// Vector dimensionality of this index
+    #[inline]
+    pub fn dimensions(&self) -> usize {
+        self.dimensions
+    }
+
+    /// Current entry point (top-level node), or `None` if index is empty
+    pub fn entry_point(&self) -> Option<NodeId> {
+        self.entry_point.read().clone()
+    }
+
+    /// Level assigned to a node, or `None` if node doesn't exist
+    pub fn node_level(&self, id: &NodeId) -> Option<usize> {
+        self.nodes.get(id).map(|n| n.level)
+    }
+
+    /// Public distance computation — same metric used for graph construction.
+    ///
+    /// Exposed so `uma_hnsw::greedy_descent_hot` can score query-vs-node
+    /// using the same metric as the standard search path.
+    #[inline]
+    pub fn compute_dist(&self, a: &[f32], b: &[f32]) -> f32 {
+        self.dist(a, b)
+    }
+
+    /// Get neighbor IDs at a specific layer for a node (from live DashMap).
+    ///
+    /// Returns empty vec if node doesn't exist or layer is out of range.
+    /// Used by `greedy_descent_hot` as fallback when node is not in hot tier.
+    pub fn node_neighbors_at_layer(&self, id: &NodeId, layer: usize) -> Vec<NodeId> {
+        self.nodes.get(id).map(|n| {
+            if layer < n.neighbors.len() {
+                n.neighbors[layer].clone()
+            } else {
+                Vec::new()
+            }
+        }).unwrap_or_default()
+    }
+
+    /// Beam search at layer 0 from a given entry point.
+    ///
+    /// This is the second phase of UMA-optimized search: after greedy descent
+    /// through hot-tier upper layers lands on a layer-0 entry point, this
+    /// method runs standard beam search to find the final top-k.
+    pub fn search_from_entry(
+        &self,
+        query: &[f32],
+        entry: NodeId,
+        ef: usize,
+    ) -> Vec<(NodeId, f32)> {
+        self.search_layer(query, entry, ef, 0)
+    }
 }
 
 /// Binary quantization (LSB-first convention)

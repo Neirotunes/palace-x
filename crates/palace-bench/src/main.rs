@@ -532,6 +532,105 @@ fn bench_full_pipeline(dims: usize, n_vectors: usize) {
     println!("    Max Hub:   {:.4}", stats.max_hub_score);
 }
 
+// ─── UMA Cache-Aware HNSW Benchmark ───────────────────────────────
+
+fn bench_uma_hnsw(dims: usize, n: usize) {
+    use palace_graph::uma_hnsw::{HotTierStore, HnswPrefetcher, search_with_prefetch};
+
+    println!("\n═══ UMA Cache-Aware HNSW (hot/cold tier + prefetch) ═══");
+
+    let mut rng = rand::thread_rng();
+    let index = HnswIndex::new(dims, 16, 200);
+
+    // Build index
+    let vectors: Vec<Vec<f32>> = (0..n).map(|_| random_vector(&mut rng, dims)).collect();
+    let start = Instant::now();
+    for (i, v) in vectors.iter().enumerate() {
+        index.insert(v.clone(), GraphMetaData { label: format!("{}", i) });
+    }
+    index.publish_snapshot();
+    let build_elapsed = start.elapsed();
+    println!("  Built HNSW index: {} vectors × {}d in {:?}", n, dims, build_elapsed);
+
+    // Build hot tier
+    let start = Instant::now();
+    let hot_tier = HotTierStore::from_hnsw(&index);
+    let hot_elapsed = start.elapsed();
+    println!(
+        "  Hot tier: {} nodes, {} in {:?}",
+        hot_tier.len(),
+        hot_tier.memory_display(),
+        hot_elapsed
+    );
+
+    let prefetcher = HnswPrefetcher::new();
+    let ef = 32;
+    let num_queries = 1000;
+    let queries: Vec<Vec<f32>> = (0..num_queries).map(|_| random_vector(&mut rng, dims)).collect();
+
+    // Benchmark: standard HNSW search
+    let start = Instant::now();
+    for q in &queries {
+        let _ = index.search(q, Some(ef));
+    }
+    let standard_elapsed = start.elapsed();
+    let standard_qps = num_queries as f64 / standard_elapsed.as_secs_f64();
+
+    // Benchmark: UMA-optimized search (hot tier + prefetch)
+    prefetcher.reset_stats();
+    let start = Instant::now();
+    for q in &queries {
+        let _ = search_with_prefetch(&index, &hot_tier, &prefetcher, q, ef);
+    }
+    let uma_elapsed = start.elapsed();
+    let uma_qps = num_queries as f64 / uma_elapsed.as_secs_f64();
+
+    let (prefetch_hints, _) = prefetcher.stats();
+
+    println!("  ┌─────────────────────────────────────────────────┐");
+    println!("  │ Method              │   QPS       │ Latency/q   │");
+    println!("  ├─────────────────────┼─────────────┼─────────────┤");
+    println!(
+        "  │ Standard HNSW       │ {:>9.0}   │ {:>9?} │",
+        standard_qps,
+        standard_elapsed / num_queries as u32
+    );
+    println!(
+        "  │ UMA Prefetch HNSW   │ {:>9.0}   │ {:>9?} │",
+        uma_qps,
+        uma_elapsed / num_queries as u32
+    );
+    println!("  └─────────────────────────────────────────────────┘");
+    println!(
+        "  Speedup: {:.2}x  |  Prefetch hints: {} ({:.1}/query)",
+        uma_qps / standard_qps.max(1.0),
+        prefetch_hints,
+        prefetch_hints as f64 / num_queries as f64
+    );
+
+    // Recall comparison — verify UMA path doesn't degrade quality
+    let k = 10;
+    let check_queries = queries.iter().take(100);
+    let mut top1_match = 0usize;
+    let mut topk_overlap = 0.0f64;
+    for q in check_queries {
+        let standard = index.search(q, Some(ef));
+        let uma = search_with_prefetch(&index, &hot_tier, &prefetcher, q, ef);
+        if !standard.is_empty() && !uma.is_empty() && standard[0].0 == uma[0].0 {
+            top1_match += 1;
+        }
+        let std_set: std::collections::HashSet<_> = standard.iter().take(k).map(|x| x.0).collect();
+        let uma_set: std::collections::HashSet<_> = uma.iter().take(k).map(|x| x.0).collect();
+        topk_overlap += std_set.intersection(&uma_set).count() as f64 / k as f64;
+    }
+    println!(
+        "  Recall parity: top-1 match {:.1}%, top-{} overlap {:.1}%",
+        top1_match as f64,
+        k,
+        topk_overlap
+    );
+}
+
 // ─── Main ──────────────────────────────────────────────────────────
 
 fn main() {
@@ -559,6 +658,7 @@ fn main() {
 
     if !sift_only {
         let dims = 384;
+        bench_uma_hnsw(dims, 5_000);
         bench_full_pipeline(dims, 5_000);
 
         println!("\n═══ Large Scale (dims=1536, OpenAI ada-002) ═══");

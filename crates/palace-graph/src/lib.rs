@@ -1,20 +1,30 @@
 // Copyright (c) 2026 M.Diach <max@neirosynth.com>
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-//! Palace Graph: Navigable Small World (NSW) index with Hub-Highway optimization
+//! Palace Graph: HNSW index with UMA-native cache-aware extensions
 //!
-//! This crate implements a flat NSW approach from the paper "Down with the Hierarchy"
-//! (arXiv:2412.01940) with Hub-Highway optimization for the Palace-X project.
+//! This crate implements Hierarchical Navigable Small World (HNSW) graph search
+//! with α-RNG neighbor selection (Vamana-style) and UMA-optimized hot/cold tier
+//! layout for Apple Silicon's unified memory architecture.
+//!
+//! ## Modules
+//! - `hnsw` — Core HNSW index with concurrent DashMap + ArcSwap snapshot
+//! - `uma_hnsw` — Cache-aware layer layout + speculative ARM64 prefetch
+//! - `nsw` — Legacy flat NSW (deprecated, kept for compatibility)
+//! - `node` — Vector node types and distance functions
+//! - `heuristic` — Hub-Highway heuristics
 
 pub mod heuristic;
 pub mod hnsw;
 pub mod node;
 pub mod nsw;
+pub mod uma_hnsw;
 
-pub use hnsw::{HnswDistanceMetric, HnswIndex};
+pub use hnsw::{HnswDistanceMetric, HnswIndex, HnswNode};
 pub use node::{GraphNode, MetaData};
 pub use nsw::{DistanceMetric, NswIndex};
 pub use palace_core::NodeId;
+pub use uma_hnsw::{CacheTier, HnswPrefetcher, HotTierStore};
 
 #[cfg(test)]
 mod tests {
