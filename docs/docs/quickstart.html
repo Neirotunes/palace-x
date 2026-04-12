@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Quickstart — Palace-X</title>
+  <meta name="description" content="Get started with Palace-X in 5 minutes. Installation, basic HNSW usage, RaBitQ compression, and combined pipeline examples.">
+  <style>
+    :root {
+      --bg: #0a0a0f;
+      --bg-card: #12121a;
+      --bg-code: #1a1a2e;
+      --border: #2a2a3e;
+      --text: #e0e0e8;
+      --text-dim: #7a7a8e;
+      --accent: #00ff88;
+      --accent-dim: #00cc6a;
+      --accent2: #6366f1;
+      --accent3: #f59e0b;
+      --red: #ef4444;
+      --mono: 'SF Mono', 'Fira Code', 'JetBrains Mono', 'Cascadia Code', monospace;
+      --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 15px;
+      line-height: 1.7;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .container {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    /* ─── Nav ─── */
+    nav {
+      border-bottom: 1px solid var(--border);
+      padding: 16px 0;
+      position: sticky;
+      top: 0;
+      background: rgba(10, 10, 15, 0.92);
+      backdrop-filter: blur(12px);
+      z-index: 100;
+    }
+    nav .container {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .logo {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+    }
+    .logo span { color: var(--accent); }
+    nav ul {
+      list-style: none;
+      display: flex;
+      gap: 24px;
+      font-size: 13px;
+    }
+    nav ul a { color: var(--text-dim); }
+    nav ul a:hover { color: var(--accent); text-decoration: none; }
+
+    /* ─── Page title ─── */
+    .page-hero {
+      padding: 60px 0 40px;
+      border-bottom: 1px solid var(--border);
+    }
+    .page-hero h1 {
+      font-family: var(--sans);
+      font-size: clamp(28px, 4vw, 42px);
+      font-weight: 700;
+      letter-spacing: -1px;
+      margin-bottom: 12px;
+    }
+    .page-hero p {
+      color: var(--text-dim);
+      font-family: var(--sans);
+      font-size: 15px;
+    }
+
+    /* ─── Section ─── */
+    section { padding: 50px 0; }
+    .section-tag {
+      font-size: 11px;
+      color: var(--accent);
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+    section h2 {
+      font-family: var(--sans);
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      margin-bottom: 20px;
+    }
+    section > .container > p {
+      color: var(--text-dim);
+      font-family: var(--sans);
+      max-width: 700px;
+      margin-bottom: 24px;
+      font-size: 14px;
+    }
+
+    /* ─── Terminal block ─── */
+    .terminal {
+      background: var(--bg-code);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px 24px;
+      margin: 24px 0 40px;
+      max-width: 700px;
+      text-align: left;
+      font-size: 13px;
+      overflow-x: auto;
+      line-height: 1.6;
+    }
+    .terminal-header {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 16px;
+    }
+    .terminal-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+    }
+    .terminal-dot:nth-child(1) { background: #ff5f57; }
+    .terminal-dot:nth-child(2) { background: #febc2e; }
+    .terminal-dot:nth-child(3) { background: #28c840; }
+    .terminal .prompt { color: var(--accent); }
+    .terminal .comment { color: var(--text-dim); }
+    .terminal .output { color: #8888aa; }
+
+    /* ─── Feature list ─── */
+    .feature-list {
+      list-style: none;
+      margin: 24px 0;
+    }
+    .feature-list li {
+      padding: 8px 0;
+      color: var(--text-dim);
+      font-family: var(--sans);
+      font-size: 14px;
+    }
+    .feature-list li::before {
+      content: '→ ';
+      color: var(--accent);
+      font-weight: 700;
+      margin-right: 8px;
+    }
+
+    /* ─── Code inline ─── */
+    code {
+      background: var(--bg-code);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.9em;
+      color: var(--accent);
+    }
+
+    /* ─── Footer ─── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 40px 0;
+      text-align: center;
+      font-size: 12px;
+      color: var(--text-dim);
+      margin-top: 60px;
+    }
+    footer a { color: var(--text-dim); }
+
+    /* ─── Responsive ─── */
+    @media (max-width: 640px) {
+      .page-hero h1 { font-size: 24px; }
+      .terminal { font-size: 12px; padding: 16px 20px; }
+      section { padding: 40px 0; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ─── Nav ─── -->
+<nav>
+  <div class="container">
+    <div class="logo">palace<span>-x</span></div>
+    <ul>
+      <li><a href="../index.html">← Back to Home</a></li>
+      <li><a href="../index.html#docs">Documentation</a></li>
+      <li><a href="https://github.com/Neirotunes/palace-x">GitHub</a></li>
+    </ul>
+  </div>
+</nav>
+
+<!-- ─── Page Hero ─── -->
+<section class="page-hero">
+  <div class="container">
+    <h1>Quickstart — Palace-X</h1>
+    <p>Get up and running in 5 minutes. Installation, basic HNSW usage, RaBitQ compression, and combined pipeline.</p>
+  </div>
+</section>
+
+<!-- ─── Prerequisites ─── -->
+<section>
+  <div class="container">
+    <div class="section-tag">Step 1</div>
+    <h2>Prerequisites</h2>
+    <p>Before you start, make sure you have the following installed:</p>
+    <ul class="feature-list">
+      <li>Rust 1.75 or later (<code>rustc --version</code>)</li>
+      <li>macOS or Linux operating system</li>
+      <li>Optional: Apple Silicon (M1/M2/M3) for NEON SIMD and Metal GPU acceleration</li>
+    </ul>
+    <p style="color: var(--text-dim); font-size: 14px; margin-top: 20px;">
+      <strong>Install Rust:</strong> Visit <a href="https://rustup.rs">rustup.rs</a> and follow the installation guide.
+    </p>
+  </div>
+</section>
+
+<!-- ─── Installation ─── -->
+<section>
+  <div class="container">
+    <div class="section-tag">Step 2</div>
+    <h2>Installation</h2>
+    <p>Add palace-x to your project in two ways:</p>
+
+    <h3 style="font-family: var(--sans); font-size: 16px; margin-top: 24px; margin-bottom: 12px;">Option A: Cargo.toml</h3>
+    <div class="terminal">
+      <div class="terminal-header">
+        <div class="terminal-dot"></div>
+        <div class="terminal-dot"></div>
+        <div class="terminal-dot"></div>
+      </div>
+      <span class="prompt">$</span> cargo add palace-x
+    </div>
+
+    <h3 style="font-family: var(--sans); font-size: 16px; margin-top: 24px; margin-bottom: 12px;">Option B: Manual Cargo.toml edit</h3>
+    <div class="terminal">
+      <div class="terminal-header">
+        <div class="terminal-dot"></div>
+        <div class="terminal-dot"></div>
+        <div class="terminal-dot"></div>
+      </div>
+      <span class="comment"># Cargo.toml</span><br>
+      <span class="output">[dependencies]</span><br>
+      <span class="output">palace-x = "0.2"</span>
+    </div>
+
+    <h3 style="font-family: var(--sans); font-size: 16px; margin-top: 24px; margin-bottom: 12px;">Option C: Clone from GitHub</h3>
+    <div class="terminal">
+      <div class="terminal-header">
+        <div class="terminal-dot"></div>
+        <div class="terminal-dot"></div>
+        <div class="terminal-dot"></div>
+      </div>
+      <span class="prompt">$</span> git clone https://github.com/Neirotunes/palace-x.git<br>
+      <span class="prompt">$</span> cd palace-x<br>
+      <span class="prompt">$</span> cargo build --release
+    </div>
+  </div>
+</section>
+
+<!-- ─── Basic HNSW Usage ─── -->
+<section>
+  <div class="container">
+    <div class="section-tag">Step 3</div>
+    <h2>Basic HNSW Usage</h2>
+    <p>Build a simple index and search:</p>
+
+    <div class="terminal">
+      <div class="terminal-header">
+        <div class="terminal-dot"></div>
+        <div class="terminal-dot"></div>
+        <div class="terminal-dot"></div>
+      </div>
+      <span class="comment">// src/main.rs</span><br>
+      <span class="output">use palace_x::HnswIndex;</span><br>
+      <br>
+      <span class="output">fn main() {</span><br>
+      <span class="output">&nbsp;&nbsp;<span class="comment">// Create index with 128-dim vectors</span></span><br>
+      <span class="output">&nbsp;&nbsp;let mut index = HnswIndex::new(128, 16);</span><br>
+      <br>
+      <span class="output">&nbsp;&nbsp;<span class="comment">// Insert vectors</span></span><br>
+      <span class="output">&nbsp;&nbsp;for i in 0..10_000 {</span><br>
+      <span class="output">&nbsp;&nbsp;&nbsp;&nbsp;let vec = vec![i as f32; 128];</span><br>
+      <span class="output">&nbsp;&nbsp;&nbsp;&nbsp;index.insert(vec, i);</span><br>
+      <span class="output">&nbsp;&nbsp;}</span><br>
+      <br>
+      <span class="output">&nbsp;&nbsp;<span class="comment">// Publish snapshot (persist to disk)</span></span><br>
+      <span class="output">&nbsp;&nbsp;index.publish_snapshot("index.bin");</span><br>
+      <br>
+      <span class="output">&nbsp;&nbsp;<span class="comment">// Search — 99.9% recall, sub-ms latency</span></span><br>
+      <span class="output">&nbsp;&nbsp;let query = vec![0.5; 128];</span><br>
+      <span class="output">&nbsp;&nbsp;let results = index.search(&query, 10);</span><br>
+      <br>
+      <span class="output">&nbsp;&nbsp;for (label, distance) in results {</span><br>
+      <span class="output">&nbsp;&nbsp;&nbsp;&nbsp;println!("Label: {}, Distance: {}", label, distance);</span><br>
+      <span class="output">&nbsp;&nbsp;}</span><br>
+      <span class="output">}</span>
+    </div>
+
+    <p style="margin-top: 24px; color: var(--text-dim); font-size: 14px;">
+      <strong>Key methods:</strong><br>
+      <code>HnswIndex::new(dim, m)</code> — Create index with dimension and max degree<br>
+      <code>insert(vec, label)</code> — Add a vector with metadata label<br>
+      <code>publish_snapshot(path)</code> — Persist index to disk<br>
+      <code>search(&query, k)</code> — Find k nearest neighbors
+    </p>
+  </div>
+</section>
+
+<!-- ─── RaBitQ Compressed Search ─── -->
+<section>
+  <div class="container">
+    <div class="section-tag">Step 4</div>
+    <h2>RaBitQ Compressed Search</h2>
+    <p>Use 4-bit quantization for 8× memory compression:</p>
+
+    <div class="terminal">
+      <div class="terminal-header">
+        <div class="terminal-dot"></div>
+        <div class="terminal-dot"></div>
+        <div class="terminal-dot"></div>
+      </div>
+      <span class="comment">// RaBitQ: Randomized Binary Quantization</span><br>
+      <span class="output">use palace_x::RaBitQIndex;</span><br>
+      <br>
+      <span class="output">let mut rabitq = RaBitQIndex::new(384, 4);</span><br>
+      <br>
+      <span class="output"><span class="comment">// Encode vectors to 4-bit representation</span></span><br>
+      <span class="output">for i in 0..100_000 {</span><br>
+      <span class="output">&nbsp;&nbsp;let vec = get_embedding(i);</span><br>
+      <span class="output">&nbsp;&nbsp;let encoded = rabitq.encode_multibit(&vec, 4);</span><br>
+      <span class="output">&nbsp;&nbsp;rabitq.insert(encoded, i);</span><br>
+      <span class="output">}</span><br>
+      <br>
+      <span class="output"><span class="comment">// Fast top-k search with compressed distances</span></span><br>
+      <span class="output">let query = get_embedding(0);</span><br>
+      <span class="output">let candidates = vec![/* ... */];</span><br>
+      <span class="output">let topk = rabitq.rabitq_topk(&query, &candidates, 10);</span>
+    </div>
+
+    <p style="margin-top: 24px; color: var(--text-dim); font-size: 14px;">
+      <strong>Key methods:</strong><br>
+      <code>RaBitQIndex::new(dim, planes)</code> — Create with 1, 2, or 4 bit-planes<br>
+      <code>encode_multibit(&vec, bits)</code> — Quantize vector to bit-planes<br>
+      <code>rabitq_topk(&query, &candidates, k)</code> — Find top-k with 4-bit distances
+    </p>
+  </div>
+</section>
+
+<!-- ─── Combined Pipeline ─── -->
+<section>
+  <div class="container">
+    <div class="section-tag">Step 5</div>
+    <h2>Combined Pipeline: HNSW + RaBitQ</h2>
+    <p>Production-grade: HNSW graph descent + RaBitQ compressed scoring + topological reranking:</p>
+
+    <div class="terminal">
+      <div class="terminal-header">
+        <div class="terminal-dot"></div>
+        <div class="terminal-dot"></div>
+        <div class="terminal-dot"></div>
+      </div>
+      <span class="comment">// Full pipeline: 99.9% recall, 5700 QPS</span><br>
+      <span class="output">use palace_x::{HnswRaBitQ, Config};</span><br>
+      <br>
+      <span class="output">let config = Config {</span><br>
+      <span class="output">&nbsp;&nbsp;dim: 384,</span><br>
+      <span class="output">&nbsp;&nbsp;hnsw_m: 16,</span><br>
+      <span class="output">&nbsp;&nbsp;hnsw_ef_c: 200,</span><br>
+      <span class="output">&nbsp;&nbsp;rabitq_planes: 4,</span><br>
+      <span class="output">&nbsp;&nbsp;metric: "l2",</span><br>
+      <span class="output">};</span><br>
+      <br>
+      <span class="output">let mut index = HnswRaBitQ::new(config);</span><br>
+      <br>
+      <span class="output"><span class="comment">// Load SIFT-1M dataset</span></span><br>
+      <span class="output">let (base, queries) = load_sift1m("data/sift1m.bin");</span><br>
+      <br>
+      <span class="output"><span class="comment">// Batch insert — 10K vec/sec</span></span><br>
+      <span class="output">for (i, vec) in base.iter().enumerate() {</span><br>
+      <span class="output">&nbsp;&nbsp;index.insert(vec.clone(), i as u32);</span><br>
+      <span class="output">}</span><br>
+      <br>
+      <span class="output">index.publish_snapshot("sift1m.index");</span><br>
+      <br>
+      <span class="output"><span class="comment">// Search — 99.9% R@10, ~170μs/query</span></span><br>
+      <span class="output">for query in queries.iter() {</span><br>
+      <span class="output">&nbsp;&nbsp;let results = index.search(query, 10);</span><br>
+      <span class="output">&nbsp;&nbsp;validate_recall(&results, query);</span><br>
+      <span class="output">}</span>
+    </div>
+
+    <p style="margin-top: 24px; color: var(--text-dim); font-size: 14px;">
+      <strong>Config fields:</strong><br>
+      <code>dim</code> — Vector dimensionality<br>
+      <code>hnsw_m</code> — Max degree (16–32 typical)<br>
+      <code>hnsw_ef_c</code> — Construction effort factor (200–400)<br>
+      <code>rabitq_planes</code> — 1, 2, or 4 bit-planes<br>
+      <code>metric</code> — "l2" or "cosine"
+    </p>
+  </div>
+</section>
+
+<!-- ─── Benchmarks ─── -->
+<section>
+  <div class="container">
+    <div class="section-tag">Step 6</div>
+    <h2>Running Benchmarks</h2>
+    <p>Validate performance on your hardware:</p>
+
+    <div class="terminal">
+      <div class="terminal-header">
+        <div class="terminal-dot"></div>
+        <div class="terminal-dot"></div>
+        <div class="terminal-dot"></div>
+      </div>
+      <span class="prompt">$</span> cd palace-x<br>
+      <span class="prompt">$</span> cargo run -p palace-bench --release<br>
+      <br>
+      <span class="comment"># Output:</span><br>
+      <span class="output">Benchmark: SIFT-10K HNSW</span><br>
+      <span class="output">Recall@10: 99.8%</span><br>
+      <span class="output">QPS: 5,696</span><br>
+      <span class="output">Memory/Vec: 640 bytes</span><br>
+      <br>
+      <span class="output">Benchmark: SIFT-10K RaBitQ 4-bit</span><br>
+      <span class="output">Recall@10: 95.2%</span><br>
+      <span class="output">QPS: 8,432</span><br>
+      <span class="output">Memory/Vec: 80 bytes (8× compression)</span><br>
+      <br>
+      <span class="output">Benchmark: HNSW+RaBitQ Combined</span><br>
+      <span class="output">Recall@10: 99.9%</span><br>
+      <span class="output">QPS: 4,000</span><br>
+      <span class="output">Memory/Vec: 360 bytes</span>
+    </div>
+
+    <p style="margin-top: 24px; color: var(--text-dim); font-size: 14px;">
+      <strong>Benchmark datasets included:</strong><br>
+      SIFT-10K (10K vectors, 128-dim) — Quick validation<br>
+      SIFT-1M (1M vectors, 128-dim) — Full production benchmark<br>
+      Custom datasets — Use <code>--dataset path/to/bin</code>
+    </p>
+  </div>
+</section>
+
+<!-- ─── Next Steps ─── -->
+<section>
+  <div class="container">
+    <div class="section-tag">Next</div>
+    <h2>Next Steps</h2>
+    <ul class="feature-list">
+      <li><strong>API Reference:</strong> <a href="api.html">Browse full Rust API docs</a></li>
+      <li><strong>Architecture Deep Dive:</strong> <a href="architecture.html">Learn HNSW+RaBitQ design</a></li>
+      <li><strong>Benchmarks:</strong> <a href="benchmarks.html">See detailed performance results</a></li>
+      <li><strong>GitHub:</strong> <a href="https://github.com/Neirotunes/palace-x">Clone the repository</a></li>
+    </ul>
+  </div>
+</section>
+
+<!-- ─── Footer ─── -->
+<footer>
+  <div class="container">
+    <p>
+      © 2026 Maksym Dyachenko. Built with Rust.
+      <br>
+      <a href="https://github.com/Neirotunes/palace-x">GitHub</a> ·
+      <a href="mailto:max@neirosynth.com">Contact</a> ·
+      <a href="https://neirosynth.com">neirosynth.com</a>
+    </p>
+  </div>
+</footer>
+
+</body>
+</html>
