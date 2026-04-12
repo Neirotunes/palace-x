@@ -12,6 +12,8 @@ pub mod arena;
 #[cfg(target_arch = "aarch64")]
 pub mod graphics;
 #[cfg(target_arch = "aarch64")]
+pub mod metal_batch;
+#[cfg(target_arch = "aarch64")]
 pub mod prefetch;
 #[cfg(target_arch = "aarch64")]
 pub mod simd;
@@ -26,6 +28,8 @@ compile_error!("palace-optimizer requires aarch64 architecture (Apple Silicon)")
 // Re-export common types
 #[cfg(target_arch = "aarch64")]
 pub use arena::{FrameAllocator, UmaArena};
+#[cfg(target_arch = "aarch64")]
+pub use metal_batch::{gpu_rerank, GpuRerankResult, MetalBatchSearch, MetalDistanceMetric};
 #[cfg(target_arch = "aarch64")]
 pub use prefetch::SpeculativePrefetcher;
 #[cfg(target_arch = "aarch64")]
