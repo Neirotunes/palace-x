@@ -23,19 +23,32 @@ Reproducible via `cargo run -p palace-bench --release`.
 
 <!-- BENCHMARK_TABLE_START -->
 
-| Method | R@1 | R@10 | R@100 | QPS | Memory/vec |
-|--------|-----|------|-------|-----|------------|
-| Brute-force L2 (baseline) | **100.0%** | **100.0%** | **100.0%** | 389 | D×4 B |
-| RaBitQ 1-bit (brute) | 52.0% | 54.0% | 65.0% | 346 | D/8+16 B |
-| RaBitQ 4-bit (brute) | 52.0% | 54.0% | 65.0% | 342 | D/2+16 B |
-| Naive binary / Hamming (brute) | 26.0% | 15.5% | 15.2% | 3,667 | D/8 B |
-| NSW L2 (ef=32) | 1.0% | 1.0% | 3.0% | 6,494 | D×4+graph |
-| NSW L2 (ef=256) | 1.0% | 1.9% | 9.2% | 1,247 | D×4+graph |
-| NSW + RaBitQ-1bit (ef=256) | 0.0% | 1.5% | 8.2% | 1,683 | D/8+16+graph |
+#### HNSW Graph Search (v0.2)
 
-> **Note:** NSW graph recall is currently limited by flat-graph construction quality
-> (early nodes get poor neighborhoods). HNSW-style hierarchical build is planned for v0.2.
-> The RaBitQ brute-force results demonstrate the quantization quality independent of graph issues.
+| Method | R@1 | R@10 | QPS | Memory/vec |
+|--------|-----|------|-----|------------|
+| **HNSW L2 (ef=32)** | **100.0%** | **99.8%** | **9,658** | D×4+graph |
+| HNSW L2 (ef=64) | 100.0% | 99.9% | 6,130 | D×4+graph |
+| HNSW L2 (ef=128) | 100.0% | 100.0% | 3,687 | D×4+graph |
+| HNSW L2 (ef=256) | 100.0% | 100.0% | 2,225 | D×4+graph |
+
+#### Quantization (brute-force)
+
+| Method | R@1 | R@10 | QPS | Memory/vec |
+|--------|-----|------|-----|------------|
+| Brute-force L2 (baseline) | 100.0% | 100.0% | 1,166 | D×4 B |
+| RaBitQ 1-bit | 52.0% | 54.0% | 346 | D/8+16 B |
+| RaBitQ 4-bit | 52.0% | 54.0% | 342 | D/2+16 B |
+| Naive binary / Hamming | 26.0% | 15.5% | 3,667 | D/8 B |
+
+#### Legacy NSW (deprecated, replaced by HNSW)
+
+| Method | R@1 | R@10 | QPS |
+|--------|-----|------|-----|
+| NSW L2 (ef=256) | 10.0% | 8.8% | 1,523 |
+
+> **HNSW delivers 99.8% Recall@10 at 9,658 QPS** — 8× faster than brute-force with near-perfect recall.
+> Next: integrate HNSW + RaBitQ for compressed graph search, and scale to SIFT-1M.
 
 ```bash
 # Reproduce these numbers
