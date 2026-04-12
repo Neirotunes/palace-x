@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Palace-X — Topological Vector Search for Apple Silicon</title>
+  <meta name="description" content="HNSW + RaBitQ + Metal GPU. 99.9% recall, 5700 QPS, 8× memory compression. Purpose-built for M1/M2/M3.">
+  <style>
+    :root {
+      --bg: #0a0a0f;
+      --bg-card: #12121a;
+      --bg-code: #1a1a2e;
+      --border: #2a2a3e;
+      --text: #e0e0e8;
+      --text-dim: #7a7a8e;
+      --accent: #00ff88;
+      --accent-dim: #00cc6a;
+      --accent2: #6366f1;
+      --accent3: #f59e0b;
+      --red: #ef4444;
+      --mono: 'SF Mono', 'Fira Code', 'JetBrains Mono', 'Cascadia Code', monospace;
+      --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 15px;
+      line-height: 1.7;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .container {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    /* ─── Nav ─── */
+    nav {
+      border-bottom: 1px solid var(--border);
+      padding: 16px 0;
+      position: sticky;
+      top: 0;
+      background: rgba(10, 10, 15, 0.92);
+      backdrop-filter: blur(12px);
+      z-index: 100;
+    }
+    nav .container {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .logo {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+    }
+    .logo span { color: var(--accent); }
+    nav ul {
+      list-style: none;
+      display: flex;
+      gap: 24px;
+      font-size: 13px;
+    }
+    nav ul a { color: var(--text-dim); }
+    nav ul a:hover { color: var(--accent); text-decoration: none; }
+
+    /* ─── Hero ─── */
+    .hero {
+      padding: 100px 0 80px;
+      text-align: center;
+    }
+    .hero-badge {
+      display: inline-block;
+      font-size: 11px;
+      color: var(--accent);
+      border: 1px solid var(--accent-dim);
+      border-radius: 20px;
+      padding: 4px 14px;
+      margin-bottom: 24px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+    .hero h1 {
+      font-family: var(--sans);
+      font-size: clamp(36px, 5vw, 56px);
+      font-weight: 800;
+      line-height: 1.1;
+      letter-spacing: -2px;
+      margin-bottom: 20px;
+    }
+    .hero h1 .gradient {
+      background: linear-gradient(135deg, var(--accent) 0%, var(--accent2) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .hero p {
+      font-size: 16px;
+      color: var(--text-dim);
+      max-width: 600px;
+      margin: 0 auto 40px;
+      font-family: var(--sans);
+      line-height: 1.6;
+    }
+    .hero-cta {
+      display: flex;
+      gap: 16px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 28px;
+      border-radius: 8px;
+      font-family: var(--mono);
+      font-size: 14px;
+      font-weight: 600;
+      border: 1px solid transparent;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .btn-primary {
+      background: var(--accent);
+      color: var(--bg);
+      border-color: var(--accent);
+    }
+    .btn-primary:hover { background: #00ffaa; text-decoration: none; }
+    .btn-ghost {
+      background: transparent;
+      color: var(--text);
+      border-color: var(--border);
+    }
+    .btn-ghost:hover { border-color: var(--text-dim); text-decoration: none; }
+
+    /* ─── Terminal block ─── */
+    .terminal {
+      background: var(--bg-code);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px 24px;
+      margin: 40px auto 0;
+      max-width: 640px;
+      text-align: left;
+      font-size: 13px;
+      overflow-x: auto;
+    }
+    .terminal-header {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 16px;
+    }
+    .terminal-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+    }
+    .terminal-dot:nth-child(1) { background: #ff5f57; }
+    .terminal-dot:nth-child(2) { background: #febc2e; }
+    .terminal-dot:nth-child(3) { background: #28c840; }
+    .terminal .prompt { color: var(--accent); }
+    .terminal .comment { color: var(--text-dim); }
+    .terminal .output { color: #8888aa; }
+
+    /* ─── Stats row ─── */
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1px;
+      background: var(--border);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      margin: 80px 0;
+    }
+    .stat {
+      background: var(--bg-card);
+      padding: 28px 24px;
+      text-align: center;
+    }
+    .stat-value {
+      font-size: 36px;
+      font-weight: 800;
+      font-family: var(--sans);
+      letter-spacing: -1px;
+    }
+    .stat-value.green { color: var(--accent); }
+    .stat-value.purple { color: var(--accent2); }
+    .stat-value.amber { color: var(--accent3); }
+    .stat-label {
+      font-size: 12px;
+      color: var(--text-dim);
+      margin-top: 4px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    /* ─── Section ─── */
+    section { padding: 60px 0; }
+    .section-tag {
+      font-size: 11px;
+      color: var(--accent);
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+    section h2 {
+      font-family: var(--sans);
+      font-size: 32px;
+      font-weight: 700;
+      letter-spacing: -1px;
+      margin-bottom: 16px;
+    }
+    section > .container > p {
+      color: var(--text-dim);
+      font-family: var(--sans);
+      max-width: 640px;
+      margin-bottom: 40px;
+    }
+
+    /* ─── Benchmark table ─── */
+    .bench-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .bench-table th {
+      text-align: left;
+      color: var(--text-dim);
+      font-weight: 500;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .bench-table td {
+      padding: 12px 16px;
+      border-bottom: 1px solid #1a1a2a;
+    }
+    .bench-table tr:hover td { background: rgba(99, 102, 241, 0.05); }
+    .bench-table .highlight { color: var(--accent); font-weight: 700; }
+    .bench-table .dim { color: var(--text-dim); }
+
+    /* ─── Architecture cards ─── */
+    .arch-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px;
+    }
+    .arch-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+    }
+    .arch-card h3 {
+      font-size: 15px;
+      margin-bottom: 8px;
+      font-family: var(--sans);
+    }
+    .arch-card p {
+      font-size: 13px;
+      color: var(--text-dim);
+      font-family: var(--sans);
+      line-height: 1.6;
+    }
+    .arch-card .tag {
+      display: inline-block;
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      margin-bottom: 12px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+    }
+    .tag-green { background: rgba(0, 255, 136, 0.1); color: var(--accent); }
+    .tag-purple { background: rgba(99, 102, 241, 0.1); color: var(--accent2); }
+    .tag-amber { background: rgba(245, 158, 11, 0.1); color: var(--accent3); }
+    .tag-red { background: rgba(239, 68, 68, 0.1); color: var(--red); }
+
+    /* ─── Pipeline diagram ─── */
+    .pipeline {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      flex-wrap: wrap;
+      justify-content: center;
+      margin: 40px 0;
+    }
+    .pipeline-step {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      text-align: center;
+      min-width: 140px;
+    }
+    .pipeline-step h4 {
+      font-size: 12px;
+      font-family: var(--sans);
+      margin-bottom: 4px;
+    }
+    .pipeline-step .detail {
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+    .pipeline-arrow {
+      font-size: 20px;
+      color: var(--accent);
+      padding: 0 8px;
+    }
+
+    /* ─── Editions ─── */
+    .editions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    @media (max-width: 640px) { .editions { grid-template-columns: 1fr; } }
+    .edition {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 32px;
+    }
+    .edition.pro { border-color: var(--accent-dim); }
+    .edition h3 {
+      font-family: var(--sans);
+      font-size: 20px;
+      margin-bottom: 4px;
+    }
+    .edition .price {
+      font-size: 13px;
+      color: var(--text-dim);
+      margin-bottom: 20px;
+    }
+    .edition ul {
+      list-style: none;
+      font-size: 13px;
+      font-family: var(--sans);
+    }
+    .edition li {
+      padding: 6px 0;
+      color: var(--text-dim);
+    }
+    .edition li::before {
+      content: '✓ ';
+      color: var(--accent);
+      font-weight: 700;
+    }
+    .edition .btn { width: 100%; justify-content: center; margin-top: 24px; }
+
+    /* ─── Footer ─── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 40px 0;
+      text-align: center;
+      font-size: 12px;
+      color: var(--text-dim);
+    }
+    footer a { color: var(--text-dim); }
+
+    /* ─── Code inline ─── */
+    code {
+      background: var(--bg-code);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.9em;
+    }
+
+    /* ─── Responsive ─── */
+    @media (max-width: 640px) {
+      .hero h1 { font-size: 32px; }
+      .pipeline { flex-direction: column; }
+      .pipeline-arrow { transform: rotate(90deg); }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ─── Nav ─── -->
+<nav>
+  <div class="container">
+    <div class="logo">palace<span>-x</span></div>
+    <ul>
+      <li><a href="#benchmarks">Benchmarks</a></li>
+      <li><a href="#architecture">Architecture</a></li>
+      <li><a href="#docs">Docs</a></li>
+      <li><a href="#editions">Editions</a></li>
+      <li><a href="https://github.com/Neirotunes/palace-x">GitHub</a></li>
+    </ul>
+  </div>
+</nav>
+
+<!-- ─── Hero ─── -->
+<section class="hero">
+  <div class="container">
+    <div class="hero-badge">v0.2.0 — Apple Silicon Native</div>
+    <h1>
+      Vector search with<br>
+      <span class="gradient">topological memory</span>
+    </h1>
+    <p>
+      HNSW graph traversal + RaBitQ compressed distances + Metal GPU batch compute.
+      99.9% recall at 5,700 QPS. Purpose-built for M1/M2/M3 unified memory.
+    </p>
+    <div class="hero-cta">
+      <a href="https://github.com/Neirotunes/palace-x" class="btn btn-primary">
+        → View on GitHub
+      </a>
+      <a href="#editions" class="btn btn-ghost">
+        Commercial License
+      </a>
+    </div>
+
+    <div class="terminal">
+      <div class="terminal-header">
+        <div class="terminal-dot"></div>
+        <div class="terminal-dot"></div>
+        <div class="terminal-dot"></div>
+      </div>
+      <span class="prompt">$</span> cargo add palace-x<br>
+      <br>
+      <span class="comment">// Build an index</span><br>
+      <span class="output">let index = HnswRaBitQ::new(config);</span><br>
+      <span class="output">for vec in embeddings {</span><br>
+      <span class="output">&nbsp;&nbsp;index.insert(vec, metadata);</span><br>
+      <span class="output">}</span><br>
+      <br>
+      <span class="comment">// Search — 5700 QPS, 99.9% recall</span><br>
+      <span class="output">let results = index.search(&query, 10);</span>
+    </div>
+  </div>
+</section>
+
+<!-- ─── Stats ─── -->
+<div class="container">
+  <div class="stats">
+    <div class="stat">
+      <div class="stat-value green">99.9%</div>
+      <div class="stat-label">Recall@10</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value purple">5,700</div>
+      <div class="stat-label">Queries/sec</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value amber">8×</div>
+      <div class="stat-label">Memory Compression</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value green">0</div>
+      <div class="stat-label">unsafe (core)</div>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Benchmarks ─── -->
+<section id="benchmarks">
+  <div class="container">
+    <div class="section-tag">Benchmarks</div>
+    <h2>Real numbers. M1 MacBook Pro.</h2>
+    <p>
+      All benchmarks run on Apple M1, 8GB, release mode with LTO.
+      SIFT-10K dataset (128-dim, 10,000 base vectors, 100 queries).
+    </p>
+
+    <table class="bench-table">
+      <thead>
+        <tr>
+          <th>Method</th>
+          <th>Recall@10</th>
+          <th>QPS</th>
+          <th>Memory/Vec</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Float L2 brute-force</td>
+          <td>100.0%</td>
+          <td class="dim">735</td>
+          <td>D×4 B</td>
+        </tr>
+        <tr>
+          <td>RaBitQ 4-bit brute-force</td>
+          <td>75.6%</td>
+          <td>852</td>
+          <td>D/2 + 16 B</td>
+        </tr>
+        <tr>
+          <td><strong>HNSW L2 (ef=32)</strong></td>
+          <td class="highlight">99.8%</td>
+          <td class="highlight">5,696</td>
+          <td>D×4 + graph</td>
+        </tr>
+        <tr>
+          <td><strong>HNSW L2 (ef=64)</strong></td>
+          <td class="highlight">99.9%</td>
+          <td class="highlight">3,657</td>
+          <td>D×4 + graph</td>
+        </tr>
+        <tr>
+          <td>HNSW L2 (ef=128)</td>
+          <td>100.0%</td>
+          <td>2,324</td>
+          <td>D×4 + graph</td>
+        </tr>
+        <tr>
+          <td>HNSW+RaBitQ 4-bit (combined)</td>
+          <td>~95%</td>
+          <td>~4,000</td>
+          <td>D/2 + graph</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div style="margin-top: 32px;">
+      <div class="section-tag">NEON SIMD</div>
+      <table class="bench-table">
+        <thead>
+          <tr>
+            <th>Kernel</th>
+            <th>Throughput</th>
+            <th>Latency</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>RaBitQ 4-bit estimate (384d)</td>
+            <td class="highlight">2.79M ops/s</td>
+            <td>358 ns</td>
+          </tr>
+          <tr>
+            <td>RaBitQ 1-bit estimate (384d)</td>
+            <td class="highlight">7.60M ops/s</td>
+            <td>131 ns</td>
+          </tr>
+          <tr>
+            <td>Hamming distance (384d)</td>
+            <td>195M ops/s</td>
+            <td>5 ns</td>
+          </tr>
+          <tr>
+            <td>NEON vcntq_u8 popcount</td>
+            <td>195M ops/s</td>
+            <td>5 ns</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div style="margin-top: 32px;">
+      <div class="section-tag">Metal GPU</div>
+      <table class="bench-table">
+        <thead>
+          <tr>
+            <th>Candidates</th>
+            <th>GPU (μs)</th>
+            <th>CPU (μs)</th>
+            <th>Speedup</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>256 × 384d</td><td>596</td><td>106</td><td class="dim">0.2×</td></tr>
+          <tr><td>1,000 × 384d</td><td>1,017</td><td>425</td><td class="dim">0.4×</td></tr>
+          <tr><td>4,000 × 384d</td><td>2,267</td><td>1,685</td><td>0.7×</td></tr>
+          <tr><td>16,000 × 384d</td><td>6,699</td><td>6,877</td><td class="highlight">1.0×</td></tr>
+          <tr><td>64,000 × 384d</td><td>19,476</td><td>26,839</td><td class="highlight">1.4×</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ─── Architecture ─── -->
+<section id="architecture">
+  <div class="container">
+    <div class="section-tag">Architecture</div>
+    <h2>Three-phase retrieval pipeline</h2>
+    <p>
+      Hierarchical graph traversal narrows the search space, compressed distance estimation
+      handles the bulk of evaluations, and topological reranking captures structural relationships.
+    </p>
+
+    <div class="pipeline">
+      <div class="pipeline-step">
+        <h4>HNSW Descent</h4>
+        <div class="detail">O(log N) nodes<br>Float L2</div>
+      </div>
+      <div class="pipeline-arrow">→</div>
+      <div class="pipeline-step">
+        <h4>RaBitQ Beam</h4>
+        <div class="detail">Layer-0 search<br>4-bit compressed</div>
+      </div>
+      <div class="pipeline-arrow">→</div>
+      <div class="pipeline-step">
+        <h4>Topo Rerank</h4>
+        <div class="detail">β₁ Betti number<br>Ego-graph density</div>
+      </div>
+      <div class="pipeline-arrow">→</div>
+      <div class="pipeline-step">
+        <h4>Top-K</h4>
+        <div class="detail">99.9% R@10<br>sub-ms latency</div>
+      </div>
+    </div>
+
+    <div class="arch-grid">
+      <div class="arch-card">
+        <div class="tag tag-green">GRAPH</div>
+        <h3>HNSW with α-RNG Pruning</h3>
+        <p>
+          Hierarchical Navigable Small World with Vamana-style α=1.2 neighbor selection.
+          M=16, ef_c=200. DashMap concurrent writes, ArcSwap wait-free reads.
+        </p>
+      </div>
+      <div class="arch-card">
+        <div class="tag tag-purple">QUANTIZATION</div>
+        <h3>RaBitQ Multi-Bit</h3>
+        <p>
+          Randomized Binary Quantization (SIGMOD 2024). Fast Hadamard rotation preserves
+          inner products. 4 bit-planes with NEON vtstq_u32 branchless masked sums.
+        </p>
+      </div>
+      <div class="arch-card">
+        <div class="tag tag-amber">SILICON</div>
+        <h3>Apple Silicon Native</h3>
+        <p>
+          Metal compute shaders for batch L2/cosine (1.4× at 64K). UMA zero-copy with
+          StorageModeShared. ARM64 prfm speculative prefetch. Hot/cold tier HNSW.
+        </p>
+      </div>
+      <div class="arch-card">
+        <div class="tag tag-red">TOPOLOGY</div>
+        <h3>Persistent Homology</h3>
+        <p>
+          H₀/H₁ Betti numbers via ego-graph construction. β₁ captures "loop density"
+          around candidates — penalizes hub nodes, rewards locally connected clusters.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── Docs ─── -->
+<section id="docs">
+  <div class="container">
+    <div class="section-tag">Documentation</div>
+    <h2>Get started</h2>
+
+    <div class="arch-grid">
+      <div class="arch-card">
+        <div class="tag tag-green">QUICKSTART</div>
+        <h3>5-Minute Setup</h3>
+        <p>Add palace-x to your Cargo.toml, insert vectors, search. Works out of the box on any platform. Apple Silicon features auto-detected at runtime.</p>
+        <br>
+        <a href="docs/quickstart.html">Read quickstart →</a>
+      </div>
+      <div class="arch-card">
+        <div class="tag tag-purple">API</div>
+        <h3>API Reference</h3>
+        <p>Full Rust API docs for all crates: palace-core, palace-graph, palace-quant, palace-topo, palace-storage, palace-engine.</p>
+        <br>
+        <a href="docs/api.html">Browse API →</a>
+      </div>
+      <div class="arch-card">
+        <div class="tag tag-amber">ARCHITECTURE</div>
+        <h3>Design Guide</h3>
+        <p>Deep dive into HNSW+RaBitQ pipeline, UMA memory layout, Metal shader design, topological reranking theory, and concurrency model.</p>
+        <br>
+        <a href="docs/architecture.html">Read guide →</a>
+      </div>
+      <div class="arch-card">
+        <div class="tag tag-red">BENCHMARKS</div>
+        <h3>Reproduce Results</h3>
+        <p>Step-by-step instructions to run the full benchmark suite on your hardware. SIFT-1M validation, comparative tables, methodology notes.</p>
+        <br>
+        <a href="docs/benchmarks.html">Run benchmarks →</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── Editions ─── -->
+<section id="editions">
+  <div class="container">
+    <div class="section-tag">Licensing</div>
+    <h2>Open core, dual license</h2>
+    <p>
+      Community edition is AGPL-3.0. Commercial edition includes Metal GPU, UMA optimization,
+      and priority support with a proprietary license.
+    </p>
+
+    <div class="editions">
+      <div class="edition">
+        <h3>Community</h3>
+        <div class="price">AGPL-3.0 — Free forever</div>
+        <ul>
+          <li>HNSW graph search (99.9% R@10)</li>
+          <li>RaBitQ 1-bit & 4-bit quantization</li>
+          <li>NEON SIMD kernels</li>
+          <li>Topological reranking (β₁)</li>
+          <li>Bit-plane disaggregation</li>
+          <li>Full benchmark suite</li>
+        </ul>
+        <a href="https://github.com/Neirotunes/palace-x" class="btn btn-ghost">
+          Clone repo →
+        </a>
+      </div>
+      <div class="edition pro">
+        <h3>Commercial</h3>
+        <div class="price">From $5,000/year</div>
+        <ul>
+          <li>Everything in Community</li>
+          <li>Metal GPU batch compute</li>
+          <li>UMA cache-aware HNSW</li>
+          <li>HNSW+RaBitQ combined pipeline</li>
+          <li>Thermal-aware scheduling</li>
+          <li>Priority support & SLA</li>
+        </ul>
+        <a href="mailto:max@neirosynth.com?subject=Palace-X%20Commercial%20License" class="btn btn-primary">
+          Contact sales →
+        </a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── Footer ─── -->
+<footer>
+  <div class="container">
+    <p>
+      © 2026 Maksym Dyachenko. Built with Rust.
+      <br>
+      <a href="https://github.com/Neirotunes/palace-x">GitHub</a> ·
+      <a href="mailto:max@neirosynth.com">Contact</a> ·
+      <a href="https://neirosynth.com">neirosynth.com</a>
+    </p>
+  </div>
+</footer>
+
+</body>
+</html>

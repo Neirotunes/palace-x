@@ -1,0 +1,684 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>API Reference — Palace-X</title>
+  <meta name="description" content="Complete API reference for Palace-X crates: palace-core, palace-graph, palace-quant, palace-storage, palace-topo, palace-optimizer.">
+  <style>
+    :root {
+      --bg: #0a0a0f;
+      --bg-card: #12121a;
+      --bg-code: #1a1a2e;
+      --border: #2a2a3e;
+      --text: #e0e0e8;
+      --text-dim: #7a7a8e;
+      --accent: #00ff88;
+      --accent-dim: #00cc6a;
+      --accent2: #6366f1;
+      --accent3: #f59e0b;
+      --red: #ef4444;
+      --mono: 'SF Mono', 'Fira Code', 'JetBrains Mono', 'Cascadia Code', monospace;
+      --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 15px;
+      line-height: 1.7;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .container {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    /* ─── Nav ─── */
+    nav {
+      border-bottom: 1px solid var(--border);
+      padding: 16px 0;
+      position: sticky;
+      top: 0;
+      background: rgba(10, 10, 15, 0.92);
+      backdrop-filter: blur(12px);
+      z-index: 100;
+    }
+    nav .container {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .logo {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+    }
+    .logo span { color: var(--accent); }
+    nav ul {
+      list-style: none;
+      display: flex;
+      gap: 24px;
+      font-size: 13px;
+    }
+    nav ul a { color: var(--text-dim); }
+    nav ul a:hover { color: var(--accent); text-decoration: none; }
+
+    /* ─── Hero ─── */
+    .hero {
+      padding: 80px 0 60px;
+      text-align: center;
+    }
+    .hero-badge {
+      display: inline-block;
+      font-size: 11px;
+      color: var(--accent);
+      border: 1px solid var(--accent-dim);
+      border-radius: 20px;
+      padding: 4px 14px;
+      margin-bottom: 24px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+    .hero h1 {
+      font-family: var(--sans);
+      font-size: clamp(32px, 5vw, 48px);
+      font-weight: 800;
+      line-height: 1.1;
+      letter-spacing: -2px;
+      margin-bottom: 12px;
+    }
+    .hero p {
+      font-size: 16px;
+      color: var(--text-dim);
+      max-width: 600px;
+      margin: 0 auto;
+      font-family: var(--sans);
+      line-height: 1.6;
+    }
+
+    /* ─── Section ─── */
+    section { padding: 60px 0; }
+    .section-tag {
+      font-size: 11px;
+      color: var(--accent);
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+    section h2 {
+      font-family: var(--sans);
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: -1px;
+      margin-bottom: 32px;
+      padding-top: 20px;
+      border-top: 1px solid var(--border);
+    }
+    section > .container > h2:first-child {
+      border-top: none;
+      padding-top: 0;
+    }
+
+    /* ─── Crate Card ─── */
+    .crate-group {
+      margin-bottom: 60px;
+    }
+    .crate-title {
+      font-family: var(--sans);
+      font-size: 22px;
+      font-weight: 700;
+      margin-bottom: 20px;
+      color: var(--accent);
+    }
+    .api-section {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 20px;
+    }
+    .api-section h3 {
+      font-family: var(--sans);
+      font-size: 15px;
+      font-weight: 700;
+      margin-bottom: 16px;
+      color: var(--text);
+    }
+    .api-section p {
+      font-family: var(--sans);
+      color: var(--text-dim);
+      font-size: 13px;
+      line-height: 1.6;
+      margin-bottom: 16px;
+    }
+
+    /* ─── Code blocks ─── */
+    .code-block {
+      background: var(--bg-code);
+      border: 1px solid #2a2a3e;
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin: 12px 0;
+      overflow-x: auto;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .code-block.method {
+      background: rgba(99, 102, 241, 0.05);
+      border-color: rgba(99, 102, 241, 0.2);
+    }
+    .code-block code {
+      color: var(--text);
+      font-family: var(--mono);
+    }
+    code {
+      background: var(--bg-code);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.9em;
+    }
+
+    /* ─── Type/method list ─── */
+    .type-list {
+      list-style: none;
+      margin: 16px 0;
+    }
+    .type-list li {
+      padding: 8px 0;
+      color: var(--text-dim);
+      font-size: 13px;
+      border-bottom: 1px solid rgba(106, 106, 142, 0.3);
+    }
+    .type-list li:last-child {
+      border-bottom: none;
+    }
+    .type-list code {
+      color: var(--accent);
+      background: transparent;
+      padding: 0;
+    }
+
+    /* ─── Tags ─── */
+    .tag {
+      display: inline-block;
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      margin-right: 8px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      margin-bottom: 12px;
+    }
+    .tag-core { background: rgba(0, 255, 136, 0.1); color: var(--accent); }
+    .tag-graph { background: rgba(99, 102, 241, 0.1); color: var(--accent2); }
+    .tag-quant { background: rgba(245, 158, 11, 0.1); color: var(--accent3); }
+    .tag-storage { background: rgba(239, 68, 68, 0.1); color: var(--red); }
+    .tag-topo { background: rgba(157, 23, 220, 0.1); color: #c084fc; }
+    .tag-gpu { background: rgba(34, 197, 94, 0.1); color: #22c55e; }
+
+    /* ─── Footer ─── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 40px 0;
+      text-align: center;
+      font-size: 12px;
+      color: var(--text-dim);
+      margin-top: 80px;
+    }
+
+    /* ─── Responsive ─── */
+    @media (max-width: 640px) {
+      .hero h1 { font-size: 28px; }
+      section h2 { font-size: 22px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ─── Nav ─── -->
+<nav>
+  <div class="container">
+    <div class="logo">palace<span>-x</span></div>
+    <ul>
+      <li><a href="../index.html">Home</a></li>
+      <li><a href="../index.html#benchmarks">Benchmarks</a></li>
+      <li><a href="../index.html#architecture">Architecture</a></li>
+      <li><a href="../index.html#editions">Editions</a></li>
+      <li><a href="https://github.com/Neirotunes/palace-x">GitHub</a></li>
+    </ul>
+  </div>
+</nav>
+
+<!-- ─── Hero ─── -->
+<section class="hero">
+  <div class="container">
+    <div class="hero-badge">API REFERENCE</div>
+    <h1>API Reference — Palace-X</h1>
+    <p>Complete API documentation for all Palace-X crates. Types, traits, and methods organized by module.</p>
+  </div>
+</section>
+
+<!-- ─── palace-core ─── -->
+<section>
+  <div class="container">
+    <h2>palace-core</h2>
+    <p>Core types and traits shared across all crates.</p>
+
+    <div class="crate-group">
+      <div class="api-section">
+        <span class="tag tag-core">CORE</span>
+        <h3>NodeId</h3>
+        <p>Unique identifier for a node in the graph.</p>
+        <div class="code-block">
+<code>pub struct NodeId(pub u64);</code>
+        </div>
+      </div>
+
+      <div class="api-section">
+        <span class="tag tag-core">CORE</span>
+        <h3>Fragment</h3>
+        <p>Represents a compressed vector fragment in the quantization pipeline.</p>
+        <div class="code-block">
+<code>pub struct Fragment { ... }</code>
+        </div>
+      </div>
+
+      <div class="api-section">
+        <span class="tag tag-core">CORE</span>
+        <h3>MetaData</h3>
+        <p>Arbitrary metadata associated with vectors.</p>
+        <div class="code-block">
+<code>pub type MetaData = HashMap&lt;String, serde_json::Value&gt;;</code>
+        </div>
+      </div>
+
+      <div class="api-section">
+        <span class="tag tag-core">CORE</span>
+        <h3>SearchConfig</h3>
+        <p>Configuration for search operations.</p>
+        <ul class="type-list">
+          <li><code>ef: usize</code> — Expansion factor for graph traversal</li>
+          <li><code>k: usize</code> — Number of results to return</li>
+          <li><code>rerank: bool</code> — Enable topological reranking</li>
+        </ul>
+      </div>
+
+      <div class="api-section">
+        <span class="tag tag-core">CORE</span>
+        <h3>MemoryProvider (trait)</h3>
+        <p>Abstraction for memory management across platforms.</p>
+        <div class="code-block method">
+<code>fn allocate(&mut self, size: usize) -> *mut u8;</code>
+        </div>
+        <div class="code-block method">
+<code>fn deallocate(&mut self, ptr: *mut u8, size: usize);</code>
+        </div>
+        <div class="code-block method">
+<code>fn name(&self) -> &str;</code>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── palace-graph ─── -->
+<section>
+  <div class="container">
+    <h2>palace-graph</h2>
+    <p>HNSW graph construction and traversal.</p>
+
+    <div class="crate-group">
+      <div class="api-section">
+        <span class="tag tag-graph">GRAPH</span>
+        <h3>HnswIndex</h3>
+        <p>Main HNSW index structure.</p>
+        <div class="code-block method">
+<code>pub fn new(dims: usize, M: usize, ef_c: usize) -> Self;</code>
+        </div>
+        <div class="code-block method">
+<code>pub fn with_cosine(dims: usize, M: usize, ef_c: usize) -> Self;</code>
+        </div>
+        <div class="code-block method">
+<code>pub fn insert(&mut self, id: NodeId, vec: &[f32], metadata: MetaData);</code>
+        </div>
+        <div class="code-block method">
+<code>pub fn search(&self, query: &[f32], ef: usize, k: usize) -> Vec&lt;SearchResult&gt;;</code>
+        </div>
+        <div class="code-block method">
+<code>pub fn publish_snapshot(&self) -> HnswSnapshot;</code>
+        </div>
+      </div>
+
+      <div class="api-section">
+        <span class="tag tag-graph">GRAPH</span>
+        <h3>HnswDistanceMetric</h3>
+        <p>Distance metric enumeration.</p>
+        <ul class="type-list">
+          <li><code>L2</code> — Euclidean distance</li>
+          <li><code>Cosine</code> — Cosine similarity</li>
+        </ul>
+      </div>
+
+      <div class="api-section">
+        <span class="tag tag-graph">GRAPH</span>
+        <h3>HnswNode</h3>
+        <p>Individual node in the HNSW graph.</p>
+        <ul class="type-list">
+          <li><code>id: NodeId</code> — Unique node identifier</li>
+          <li><code>vector: Vec&lt;f32&gt;</code> — Full-precision vector</li>
+          <li><code>binary: Option&lt;Vec&lt;u8&gt;&gt;</code> — Optional binary representation</li>
+          <li><code>neighbors: Vec&lt;Vec&lt;NodeId&gt;&gt;</code> — Multi-layer adjacency list</li>
+          <li><code>level: usize</code> — Layer assignment in hierarchy</li>
+          <li><code>metadata: MetaData</code> — Associated metadata</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── palace-quant ─── -->
+<section>
+  <div class="container">
+    <h2>palace-quant</h2>
+    <p>RaBitQ quantization and distance estimation.</p>
+
+    <div class="crate-group">
+      <div class="api-section">
+        <span class="tag tag-quant">QUANT</span>
+        <h3>RaBitQIndex</h3>
+        <p>Randomized Binary Quantization index.</p>
+        <div class="code-block method">
+<code>pub fn new(dim: usize, seed: u64) -> Self;</code>
+        </div>
+        <div class="code-block method">
+<code>pub fn encode(&self, vec: &[f32]) -> RaBitQCode;</code>
+        </div>
+        <div class="code-block method">
+<code>pub fn encode_multibit(&self, vec: &[f32], bits: usize) -> RaBitQCode;</code>
+        </div>
+        <div class="code-block method">
+<code>pub fn encode_query(&self, query: &[f32]) -> RaBitQQuery;</code>
+        </div>
+        <div class="code-block method">
+<code>pub fn estimate_distance(&self, query: &RaBitQQuery, code: &RaBitQCode) -> f32;</code>
+        </div>
+      </div>
+
+      <div class="api-section">
+        <span class="tag tag-quant">QUANT</span>
+        <h3>RaBitQCode</h3>
+        <p>Compressed vector representation (4-bit or 1-bit).</p>
+        <div class="code-block">
+<code>pub struct RaBitQCode { planes: Vec&lt;u64&gt;, bits: usize }</code>
+        </div>
+      </div>
+
+      <div class="api-section">
+        <span class="tag tag-quant">QUANT</span>
+        <h3>RaBitQQuery</h3>
+        <p>Encoded query for distance estimation.</p>
+        <div class="code-block">
+<code>pub struct RaBitQQuery { rotated: Vec&lt;f32&gt; }</code>
+        </div>
+      </div>
+
+      <div class="api-section">
+        <span class="tag tag-quant">QUANT</span>
+        <h3>rabitq_topk (function)</h3>
+        <p>Top-K search using RaBitQ codes.</p>
+        <div class="code-block method">
+<code>pub fn rabitq_topk(
+  index: &RaBitQIndex,
+  query: &RaBitQQuery,
+  codes: &[RaBitQCode],
+  k: usize
+) -> Vec&lt;(usize, f32)&gt;;</code>
+        </div>
+      </div>
+
+      <div class="api-section">
+        <span class="tag tag-quant">QUANT</span>
+        <h3>Hamming Distance</h3>
+        <p>Binary distance utilities.</p>
+        <div class="code-block method">
+<code>pub fn hamming_distance(a: &[u64], b: &[u64]) -> usize;</code>
+        </div>
+        <div class="code-block method">
+<code>pub struct HammingBackend;</code>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── palace-storage ─── -->
+<section>
+  <div class="container">
+    <h2>palace-storage</h2>
+    <p>Unified HNSW+RaBitQ index with persistence.</p>
+
+    <div class="crate-group">
+      <div class="api-section">
+        <span class="tag tag-storage">STORAGE</span>
+        <h3>HnswRaBitQ</h3>
+        <p>Combined graph + quantization index.</p>
+        <div class="code-block method">
+<code>pub fn new(config: HnswRaBitQConfig) -> Self;</code>
+        </div>
+        <div class="code-block method">
+<code>pub fn insert(&mut self, vec: Vec&lt;f32&gt;, meta: MetaData);</code>
+        </div>
+        <div class="code-block method">
+<code>pub fn search(&self, query: &[f32], k: usize) -> Vec&lt;RaBitQSearchResult&gt;;</code>
+        </div>
+        <div class="code-block method">
+<code>pub fn publish_snapshot(&self) -> HnswRaBitQSnapshot;</code>
+        </div>
+        <div class="code-block method">
+<code>pub fn set_ef_search(&mut self, ef: usize);</code>
+        </div>
+      </div>
+
+      <div class="api-section">
+        <span class="tag tag-storage">STORAGE</span>
+        <h3>HnswRaBitQConfig</h3>
+        <p>Configuration structure for index creation.</p>
+        <ul class="type-list">
+          <li><code>dimensions: usize</code> — Vector dimension</li>
+          <li><code>max_neighbors: usize</code> — HNSW M parameter</li>
+          <li><code>ef_construction: usize</code> — HNSW ef_c parameter</li>
+          <li><code>rabitq_bits: usize</code> — Quantization bits (1 or 4)</li>
+          <li><code>rerank_top: usize</code> — Top-K before reranking</li>
+          <li><code>metric: HnswDistanceMetric</code> — L2 or Cosine</li>
+          <li><code>seed: u64</code> — RaBitQ random seed</li>
+        </ul>
+      </div>
+
+      <div class="api-section">
+        <span class="tag tag-storage">STORAGE</span>
+        <h3>RaBitQSearchResult</h3>
+        <p>Result from hybrid search.</p>
+        <ul class="type-list">
+          <li><code>node_id: NodeId</code> — Matched node</li>
+          <li><code>estimated_dist: f32</code> — RaBitQ estimate</li>
+          <li><code>precise_dist: Option&lt;f32&gt;</code> — Exact distance (if computed)</li>
+        </ul>
+      </div>
+
+      <div class="api-section">
+        <span class="tag tag-storage">STORAGE</span>
+        <h3>MemoryPalace</h3>
+        <p>Snapshot for persistence and sharing.</p>
+        <div class="code-block">
+<code>pub struct MemoryPalace { graph: HnswSnapshot, codes: Vec&lt;RaBitQCode&gt; }</code>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── palace-topo ─── -->
+<section>
+  <div class="container">
+    <h2>palace-topo</h2>
+    <p>Topological reranking via persistent homology.</p>
+
+    <div class="crate-group">
+      <div class="api-section">
+        <span class="tag tag-topo">TOPO</span>
+        <h3>betti::beta_1 (function)</h3>
+        <p>Compute first Betti number (loop density).</p>
+        <div class="code-block method">
+<code>pub fn beta_1(ego_graph: &EgoGraph) -> usize;</code>
+        </div>
+      </div>
+
+      <div class="api-section">
+        <span class="tag tag-topo">TOPO</span>
+        <h3>ego_graph::EgoGraph</h3>
+        <p>Ego-graph around a query result candidate.</p>
+        <ul class="type-list">
+          <li><code>center: NodeId</code> — Central node</li>
+          <li><code>neighbors: Vec&lt;NodeId&gt;</code> — 1-hop neighbors</li>
+          <li><code>edges: Vec&lt;(NodeId, NodeId)&gt;</code> — Edges in subgraph</li>
+        </ul>
+      </div>
+
+      <div class="api-section">
+        <span class="tag tag-topo">TOPO</span>
+        <h3>metric::d_total (function)</h3>
+        <p>Total persistence metric for topological strength.</p>
+        <div class="code-block method">
+<code>pub fn d_total(diagram: &PersistenceDiagram) -> f32;</code>
+        </div>
+      </div>
+
+      <div class="api-section">
+        <span class="tag tag-topo">TOPO</span>
+        <h3>persistence::persistence_diagram (function)</h3>
+        <p>Compute persistence diagram for ego-graph.</p>
+        <div class="code-block method">
+<code>pub fn persistence_diagram(ego_graph: &EgoGraph) -> PersistenceDiagram;</code>
+        </div>
+      </div>
+
+      <div class="api-section">
+        <span class="tag tag-topo">TOPO</span>
+        <h3>persistence::d_total_persistence (function)</h3>
+        <p>Aggregated topological strength.</p>
+        <div class="code-block method">
+<code>pub fn d_total_persistence(diagrams: &[PersistenceDiagram]) -> f32;</code>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── palace-optimizer ─── -->
+<section>
+  <div class="container">
+    <h2>palace-optimizer</h2>
+    <p>Apple Silicon GPU acceleration (Metal). Available on macOS with M1/M2/M3 only.</p>
+
+    <div class="crate-group">
+      <div class="api-section">
+        <span class="tag tag-gpu">GPU</span>
+        <h3>MetalBatchSearch</h3>
+        <p>GPU-accelerated batch distance computation.</p>
+        <div class="code-block method">
+<code>pub fn new(device: &Device) -> Self;</code>
+        </div>
+        <div class="code-block method">
+<code>pub fn batch_distance(
+  &self,
+  query: &[f32],
+  candidates: &[[f32; D]],
+  metric: MetalDistanceMetric
+) -> Vec&lt;f32&gt;;</code>
+        </div>
+      </div>
+
+      <div class="api-section">
+        <span class="tag tag-gpu">GPU</span>
+        <h3>gpu_rerank (function)</h3>
+        <p>GPU-assisted candidate reranking.</p>
+        <div class="code-block method">
+<code>pub fn gpu_rerank(
+  candidates: &[RaBitQSearchResult],
+  query: &[f32],
+  device: &Device
+) -> Vec&lt;RaBitQSearchResult&gt;;</code>
+        </div>
+      </div>
+
+      <div class="api-section">
+        <span class="tag tag-gpu">GPU</span>
+        <h3>MetalDistanceMetric</h3>
+        <p>GPU-supported distance metrics.</p>
+        <ul class="type-list">
+          <li><code>L2</code> — GPU-optimized L2 distance</li>
+          <li><code>Cosine</code> — GPU-optimized cosine similarity</li>
+        </ul>
+      </div>
+
+      <div class="api-section">
+        <span class="tag tag-gpu">GPU</span>
+        <h3>UmaArena</h3>
+        <p>Unified memory allocator for zero-copy GPU access.</p>
+        <div class="code-block method">
+<code>pub fn allocate(&mut self, size: usize) -> *mut u8;</code>
+        </div>
+        <div class="code-block method">
+<code>pub fn memory_usage(&self) -> MemoryStats;</code>
+        </div>
+      </div>
+
+      <div class="api-section">
+        <span class="tag tag-gpu">GPU</span>
+        <h3>HotTierStore</h3>
+        <p>Hot/cold tier management for memory-constrained scenarios.</p>
+        <div class="code-block method">
+<code>pub fn promote(&mut self, node_ids: &[NodeId]);</code>
+        </div>
+        <div class="code-block method">
+<code>pub fn demote(&mut self, node_ids: &[NodeId]);</code>
+        </div>
+      </div>
+
+      <div class="api-section">
+        <span class="tag tag-gpu">GPU</span>
+        <h3>HnswPrefetcher</h3>
+        <p>ARM64 speculative prefetching for branch prediction.</p>
+        <div class="code-block method">
+<code>pub fn prefetch_layer(&self, layer: usize);</code>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── Footer ─── -->
+<footer>
+  <div class="container">
+    <p>
+      Palace-X API Reference v0.2.0
+      <br>
+      <a href="../index.html">Home</a> ·
+      <a href="quickstart.html">Quickstart</a> ·
+      <a href="architecture.html">Architecture Guide</a> ·
+      <a href="https://github.com/Neirotunes/palace-x">GitHub</a>
+    </p>
+  </div>
+</footer>
+
+</body>
+</html>

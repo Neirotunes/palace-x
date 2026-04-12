@@ -1,0 +1,805 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Architecture — Palace-X</title>
+  <meta name="description" content="Deep dive into Palace-X internals: HNSW graph, RaBitQ quantization, Metal GPU, topological reranking, and concurrency model.">
+  <style>
+    :root {
+      --bg: #0a0a0f;
+      --bg-card: #12121a;
+      --bg-code: #1a1a2e;
+      --border: #2a2a3e;
+      --text: #e0e0e8;
+      --text-dim: #7a7a8e;
+      --accent: #00ff88;
+      --accent-dim: #00cc6a;
+      --accent2: #6366f1;
+      --accent3: #f59e0b;
+      --red: #ef4444;
+      --mono: 'SF Mono', 'Fira Code', 'JetBrains Mono', 'Cascadia Code', monospace;
+      --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 15px;
+      line-height: 1.7;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .container {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    /* ─── Nav ─── */
+    nav {
+      border-bottom: 1px solid var(--border);
+      padding: 16px 0;
+      position: sticky;
+      top: 0;
+      background: rgba(10, 10, 15, 0.92);
+      backdrop-filter: blur(12px);
+      z-index: 100;
+    }
+    nav .container {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .logo {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+    }
+    .logo span { color: var(--accent); }
+    nav ul {
+      list-style: none;
+      display: flex;
+      gap: 24px;
+      font-size: 13px;
+    }
+    nav ul a { color: var(--text-dim); }
+    nav ul a:hover { color: var(--accent); text-decoration: none; }
+
+    /* ─── Section ─── */
+    section { padding: 60px 0; }
+    .section-tag {
+      font-size: 11px;
+      color: var(--accent);
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+    section h2 {
+      font-family: var(--sans);
+      font-size: 32px;
+      font-weight: 700;
+      letter-spacing: -1px;
+      margin-bottom: 16px;
+    }
+    section h1 {
+      font-family: var(--sans);
+      font-size: 42px;
+      font-weight: 800;
+      letter-spacing: -1px;
+      margin-bottom: 8px;
+    }
+    section > .container > p {
+      color: var(--text-dim);
+      font-family: var(--sans);
+      max-width: 720px;
+      margin-bottom: 40px;
+      line-height: 1.6;
+    }
+
+    /* ─── Architecture cards ─── */
+    .arch-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px;
+    }
+    .arch-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+    }
+    .arch-card h3 {
+      font-size: 15px;
+      margin-bottom: 8px;
+      font-family: var(--sans);
+    }
+    .arch-card p {
+      font-size: 13px;
+      color: var(--text-dim);
+      font-family: var(--sans);
+      line-height: 1.6;
+    }
+    .arch-card .tag {
+      display: inline-block;
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      margin-bottom: 12px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+    }
+    .tag-green { background: rgba(0, 255, 136, 0.1); color: var(--accent); }
+    .tag-purple { background: rgba(99, 102, 241, 0.1); color: var(--accent2); }
+    .tag-amber { background: rgba(245, 158, 11, 0.1); color: var(--accent3); }
+    .tag-red { background: rgba(239, 68, 68, 0.1); color: var(--red); }
+
+    /* ─── Code blocks ─── */
+    code {
+      background: var(--bg-code);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.9em;
+    }
+    pre {
+      background: var(--bg-code);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      overflow-x: auto;
+      font-size: 13px;
+      margin: 24px 0;
+      line-height: 1.5;
+    }
+    pre code {
+      background: transparent;
+      padding: 0;
+      border-radius: 0;
+    }
+
+    /* ─── Formula blocks ─── */
+    .formula {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      margin: 20px 0;
+      font-family: var(--sans);
+      font-size: 14px;
+      color: var(--text);
+      font-style: italic;
+    }
+
+    /* ─── Diagram ─── */
+    .diagram {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 40px 24px;
+      margin: 40px 0;
+      text-align: center;
+    }
+    .diagram-item {
+      display: inline-block;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      padding: 16px 24px;
+      border-radius: 8px;
+      margin: 0 8px;
+      font-size: 13px;
+      font-family: var(--sans);
+    }
+    .diagram-label {
+      display: block;
+      font-size: 11px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 4px;
+    }
+    .diagram-arrow {
+      color: var(--accent);
+      font-size: 20px;
+      display: inline-block;
+      margin: 0 12px;
+    }
+
+    /* ─── Tables ─── */
+    .tech-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      margin: 20px 0;
+    }
+    .tech-table th {
+      text-align: left;
+      color: var(--text-dim);
+      font-weight: 500;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .tech-table td {
+      padding: 12px 16px;
+      border-bottom: 1px solid #1a1a2a;
+      font-family: var(--sans);
+    }
+    .tech-table tr:hover td { background: rgba(99, 102, 241, 0.05); }
+    .tech-table .mono { font-family: var(--mono); }
+    .tech-table .highlight { color: var(--accent); font-weight: 700; }
+
+    /* ─── Callout ─── */
+    .callout {
+      background: rgba(0, 255, 136, 0.05);
+      border-left: 3px solid var(--accent);
+      padding: 16px 20px;
+      border-radius: 4px;
+      margin: 20px 0;
+      font-size: 13px;
+      font-family: var(--sans);
+      line-height: 1.6;
+    }
+
+    /* ─── Footer ─── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 40px 0;
+      text-align: center;
+      font-size: 12px;
+      color: var(--text-dim);
+    }
+    footer a { color: var(--text-dim); }
+
+    /* ─── Responsive ─── */
+    @media (max-width: 640px) {
+      section h1 { font-size: 32px; }
+      section h2 { font-size: 26px; }
+      .diagram { padding: 24px 12px; }
+      .diagram-item { display: block; margin: 8px 0; }
+      .diagram-arrow { display: block; margin: 8px 0; }
+      nav ul { gap: 12px; font-size: 12px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ─── Nav ─── -->
+<nav>
+  <div class="container">
+    <div class="logo">palace<span>-x</span></div>
+    <ul>
+      <li><a href="../index.html">Home</a></li>
+      <li><a href="../index.html#benchmarks">Benchmarks</a></li>
+      <li><a href="#system-overview">System</a></li>
+      <li><a href="#hnsw-graph">HNSW</a></li>
+      <li><a href="#rabitq">RaBitQ</a></li>
+      <li><a href="https://github.com/Neirotunes/palace-x">GitHub</a></li>
+    </ul>
+  </div>
+</nav>
+
+<!-- ─── Title ─── -->
+<section>
+  <div class="container">
+    <h1>Architecture — Palace-X</h1>
+    <p>
+      A deep dive into Palace-X internals. This guide covers the hierarchical graph structure,
+      compressed quantization pipeline, Apple Silicon optimizations, topological reranking,
+      and concurrent index updates.
+    </p>
+  </div>
+</section>
+
+<!-- ─── System Overview ─── -->
+<section id="system-overview">
+  <div class="container">
+    <div class="section-tag">System Overview</div>
+    <h2>9 Core Crates</h2>
+    <p>
+      Palace-X is modular. Each crate handles a distinct responsibility: graph topology,
+      quantization, GPU dispatch, storage layout, concurrency, and orchestration.
+    </p>
+
+    <div class="arch-grid">
+      <div class="arch-card">
+        <div class="tag tag-green">GRAPH</div>
+        <h3>palace-graph</h3>
+        <p>
+          HNSW construction, layer assignment, neighbor selection with α-RNG pruning.
+          Builds the hierarchical navigable small world graph structure.
+        </p>
+      </div>
+      <div class="arch-card">
+        <div class="tag tag-purple">QUANTIZATION</div>
+        <h3>palace-quant</h3>
+        <p>
+          RaBitQ implementation: Hadamard rotation, bit-plane projection, multi-bit distance
+          estimation. Handles 1-bit through 8-bit quantization modes.
+        </p>
+      </div>
+      <div class="arch-card">
+        <div class="tag tag-amber">TOPOLOGY</div>
+        <h3>palace-topo</h3>
+        <p>
+          Ego-graph construction, persistent homology H₀/H₁ computation via boundary matrices,
+          β₁ Betti number extraction for loop-density reranking.
+        </p>
+      </div>
+      <div class="arch-card">
+        <div class="tag tag-red">STORAGE</div>
+        <h3>palace-storage</h3>
+        <p>
+          Memory layout: ArcSwap snapshots for wait-free reads, DashMap for lock-free writes.
+          Hot/cold tier tracking, metadata serialization, persistence layer.
+        </p>
+      </div>
+      <div class="arch-card">
+        <div class="tag tag-green">CORE</div>
+        <h3>palace-core</h3>
+        <p>
+          Safe Rust types, trait definitions, distance metrics (L2, cosine). Zero unsafe code.
+          Core abstractions shared across the system.
+        </p>
+      </div>
+      <div class="arch-card">
+        <div class="tag tag-purple">ENGINE</div>
+        <h3>palace-engine</h3>
+        <p>
+          High-level search API: greedy descent, beam search, optional float reranking.
+          Orchestrates the three-phase pipeline end-to-end.
+        </p>
+      </div>
+      <div class="arch-card">
+        <div class="tag tag-amber">METAL</div>
+        <h3>palace-metal</h3>
+        <p>
+          Metal compute shaders for batch L2 and cosine distance. StorageModeShared zero-copy.
+          Runtime detection of Apple Silicon, fallback to CPU on other platforms.
+        </p>
+      </div>
+      <div class="arch-card">
+        <div class="tag tag-red">NEON</div>
+        <h3>palace-neon</h3>
+        <p>
+          ARM64 NEON SIMD kernels: vtstq_u32 masked bit-plane sums, vcntq_u8 popcount,
+          Hamming distance. Branchless implementations for consistent latency.
+        </p>
+      </div>
+      <div class="arch-card">
+        <div class="tag tag-green">API</div>
+        <h3>palace-x (root)</h3>
+        <p>
+          Public crate. Exports HnswRaBitQ builder, search interface, configuration.
+          Unified namespace for end users.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── HNSW Graph ─── -->
+<section id="hnsw-graph">
+  <div class="container">
+    <div class="section-tag">Hierarchical Navigation</div>
+    <h2>HNSW Graph Structure</h2>
+    <p>
+      Palace-X uses a Hierarchical Navigable Small World graph with Vamana-style α-RNG
+      neighbor selection. The graph enables logarithmic-time descent to find nearby vectors,
+      dramatically narrowing the search space before expensive distance computations.
+    </p>
+
+    <div class="arch-grid">
+      <div class="arch-card">
+        <div class="tag tag-green">PARAMETERS</div>
+        <h3>Configuration</h3>
+        <table class="tech-table">
+          <tr>
+            <td class="mono">M = 16</td>
+            <td>Max neighbors per node (layer-0)</td>
+          </tr>
+          <tr>
+            <td class="mono">M_L = M</td>
+            <td>Max neighbors (higher layers)</td>
+          </tr>
+          <tr>
+            <td class="mono">ef_c = 200</td>
+            <td>Beam width during construction</td>
+          </tr>
+          <tr>
+            <td class="mono">α = 1.2</td>
+            <td>RNG pruning parameter</td>
+          </tr>
+        </table>
+      </div>
+      <div class="arch-card">
+        <div class="tag tag-purple">LAYER ASSIGNMENT</div>
+        <h3>Level Distribution</h3>
+        <p>
+          New vector insertion samples an entry level from:
+        </p>
+        <code>level = floor(-ln(U) / ln(M))</code>
+        <p>
+          where U is uniform [0,1). This ensures exponential decay of node count per layer,
+          enabling O(log N) navigable path lengths.
+        </p>
+      </div>
+    </div>
+
+    <div class="callout">
+      <strong>α-RNG Pruning:</strong> During insertion, candidate neighbors are filtered
+      using a Relative Neighborhood Graph criterion with parameter α. A candidate C is kept
+      iff for all other candidates D: d(new, C) ≤ α × max(d(new, D), d(D, C)). This reduces
+      hub formation while maintaining connectivity.
+    </div>
+
+    <h3 style="margin-top: 40px; margin-bottom: 16px;">Concurrency & Snapshots</h3>
+    <p>
+      Writes use <code>DashMap</code> for lock-free concurrent neighbor list updates.
+      Reads snapshot the entire graph via <code>ArcSwap</code> — a wait-free (no spinning)
+      atomic pointer that serves immutable clones to searchers. This eliminates read-write
+      contention during live search.
+    </p>
+
+    <div class="formula">
+      <strong>Wait-free Search:</strong> At most one insertion waits (publishing snapshot).
+      All searches proceed concurrently without locks. Auto-publishes every 1000 inserts
+      to amortize snapshot overhead.
+    </div>
+  </div>
+</section>
+
+<!-- ─── RaBitQ Quantization ─── -->
+<section id="rabitq">
+  <div class="container">
+    <div class="section-tag">Compressed Distances</div>
+    <h2>RaBitQ: Randomized Binary Quantization</h2>
+    <p>
+      RaBitQ (SIGMOD 2024) projects full-precision vectors into 1–8 bit-planes via randomized
+      Hadamard rotation. Similarity is estimated from weighted bit-plane inner products,
+      achieving 4× memory compression with minimal recall loss.
+    </p>
+
+    <div class="arch-grid">
+      <div class="arch-card">
+        <div class="tag tag-green">ROTATION</div>
+        <h3>Fast Hadamard Transform</h3>
+        <p>
+          Vectors undergo Walsh-Hadamard rotation H before binarization. This randomized
+          projection preserves inner products in expectation and spreads information across bits.
+        </p>
+        <code style="display: block; margin-top: 12px;">x' = H × x</code>
+        <p style="margin-top: 12px;">
+          Complexity is O(D log D) via recursive butterfly operations, not O(D²).
+        </p>
+      </div>
+      <div class="arch-card">
+        <div class="tag tag-purple">BIT-PLANES</div>
+        <h3>Multi-Bit Projection</h3>
+        <p>
+          After rotation, each vector component's sign bits are extracted into 4 planes
+          (configurable 1–8). Plane <em>k</em> contains bit <em>k</em> across all dimensions.
+        </p>
+        <code style="display: block; margin-top: 12px;">plane_k[i] = (x'[i] >> k) & 1</code>
+      </div>
+    </div>
+
+    <h3 style="margin-top: 40px; margin-bottom: 16px;">Distance Estimation</h3>
+    <p>
+      The estimated inner product (cosine or L2) is computed from the bit-plane popcount sums:
+    </p>
+
+    <div class="formula">
+      <strong>Weighted Bit-Plane Inner Product:</strong><br>
+      IP_est = Σ<sub>k=1</sub><sup>B</sup> w<sub>k</sub> × popcount(plane_k(q) ⊙ plane_k(x))<br>
+      <br>
+      where w<sub>k</sub> are learned weights (typically 2<sup>-k</sup>), ⊙ is bitwise AND,
+      and B is the number of bit-planes (4 for 4-bit mode).
+    </div>
+
+    <h3 style="margin-top: 40px; margin-bottom: 16px;">NEON Implementation</h3>
+    <p>
+      The critical kernel uses ARM64 NEON intrinsics for branchless masked sums:
+    </p>
+
+    <pre>vtstq_u32(plane_k_q, plane_k_x)  // AND + test
+vcntq_u8(...)                       // popcount
+vmlaq_u32(sum, popcount, weight_k)  // MAC accumulate</pre>
+
+    <p>
+      Achieves <strong>2.79M ops/s</strong> for 4-bit (384-dim) and <strong>7.60M ops/s</strong>
+      for 1-bit, with consistent sub-microsecond latency.
+    </p>
+
+    <div class="callout">
+      <strong>Why Multi-Bit?</strong> Single-bit quantization is fast but loses too much
+      information (75.6% recall on SIFT-10K). 4-bit provides a sweet spot: 95%+ recall
+      with 8× memory savings and still faster than float L2 in beam search.
+    </div>
+  </div>
+</section>
+
+<!-- ─── Combined Pipeline ─── -->
+<section>
+  <div class="container">
+    <div class="section-tag">Search Strategy</div>
+    <h2>Three-Phase Pipeline</h2>
+    <p>
+      Palace-X's recall-at-memory advantage comes from chaining three distinct phases.
+      Each phase operates in a different computational regime, minimizing total latency.
+    </p>
+
+    <div class="diagram">
+      <div class="diagram-item">
+        <span class="diagram-label">Phase 1</span>
+        <strong>Greedy Descent</strong><br>
+        <span style="font-size: 12px; color: var(--text-dim);">O(log N) nodes<br>Float L2</span>
+      </div>
+      <div class="diagram-arrow">→</div>
+      <div class="diagram-item">
+        <span class="diagram-label">Phase 2</span>
+        <strong>RaBitQ Beam</strong><br>
+        <span style="font-size: 12px; color: var(--text-dim);">Layer-0 exhaustive<br>4-bit compressed</span>
+      </div>
+      <div class="diagram-arrow">→</div>
+      <div class="diagram-item">
+        <span class="diagram-label">Phase 3</span>
+        <strong>Topo Rerank</strong><br>
+        <span style="font-size: 12px; color: var(--text-dim);">Top-K candidates<br>β₁ Betti penalty</span>
+      </div>
+    </div>
+
+    <h3 style="margin-top: 40px; margin-bottom: 16px;">Phase 1: Greedy Descent</h3>
+    <p>
+      Starting from the entry point (top layer), we traverse the HNSW graph using float L2 distance.
+      Each layer, we greedily move to the neighbor closest to the query. This O(log N) traversal
+      narrows candidates from all N vectors down to ~100–200 promising neighbors.
+    </p>
+
+    <h3 style="margin-top: 32px; margin-bottom: 16px;">Phase 2: RaBitQ Beam Search</h3>
+    <p>
+      The candidates from Phase 1 seed a beam search over the entire layer-0 graph.
+      Distances are estimated using 4-bit RaBitQ, which is 3–5× faster than float L2
+      and reduces cache pressure. We expand the beam with the top matches, exploring
+      their neighbors with compressed distances. This is where the bulk of evaluations
+      happen, but at drastically reduced cost.
+    </p>
+
+    <h3 style="margin-top: 32px; margin-bottom: 16px;">Phase 3: Topological Reranking (Optional)</h3>
+    <p>
+      If enabled, the top-K candidates from Phase 2 are reranked using a second signal:
+      the β₁ Betti number (persistent homology). This penalizes hub nodes and promotes
+      locally connected clusters. The rerank is O(K²) with K ≤ 100, negligible overhead.
+    </p>
+
+    <h3 style="margin-top: 32px; margin-bottom: 16px;">Why This Gives HNSW Recall at RaBitQ Memory</h3>
+    <p>
+      The key insight is <strong>asymmetric pruning</strong>:
+    </p>
+    <ul style="margin-left: 20px; margin-top: 12px;">
+      <li><strong>Phase 1</strong> uses full precision to eliminate far-away regions.</li>
+      <li><strong>Phase 2</strong> uses cheap 4-bit estimates to rank remaining candidates.</li>
+      <li><strong>Phase 3</strong> (optional) uses topology to break ties among similar vectors.</li>
+    </ul>
+    <p style="margin-top: 12px;">
+      Because Phase 2 operates only on vectors already deemed "close" by Phase 1,
+      the 4-bit approximation error is small. We recover HNSW's accuracy without
+      storing full-precision vectors for all N candidates. Result: 99.9% recall,
+      8× memory compression, competitive QPS.
+    </p>
+  </div>
+</section>
+
+<!-- ─── Apple Silicon ─── -->
+<section>
+  <div class="container">
+    <div class="section-tag">Hardware Specialization</div>
+    <h2>Apple Silicon & Unified Memory</h2>
+    <p>
+      M1/M2/M3 chips expose a unified memory architecture (UMA) with a single coherent address
+      space for CPU and GPU. Palace-X exploits this with zero-copy Metal compute shaders
+      and cache-aware data layout.
+    </p>
+
+    <div class="arch-grid">
+      <div class="arch-card">
+        <div class="tag tag-green">UMA MODEL</div>
+        <h3>Shared Address Space</h3>
+        <p>
+          No discrete GPU memory. Buffers marked <code>StorageModeShared</code> are accessible
+          from both CPU and GPU cores without explicit transfer. Eliminates PCIe bottleneck.
+        </p>
+      </div>
+      <div class="arch-card">
+        <div class="tag tag-purple">METAL SHADERS</div>
+        <h3>Batch Compute</h3>
+        <p>
+          For large candidate sets (16K+), Metal achieves 1.4× speedup over NEON.
+          Kernel computes L2 / cosine distance for all candidate-query pairs in parallel.
+        </p>
+      </div>
+    </div>
+
+    <h3 style="margin-top: 40px; margin-bottom: 16px;">Cache Hierarchy & Prefetch</h3>
+    <p>
+      UMA memory is not equal: caches favor GPU-friendly access patterns. Palace-X lays out
+      hot vectors (frequently visited in HNSW traversal) contiguously and cold vectors
+      separately. CPU prefetch instructions (<code>prfm</code>) hint the cache subsystem.
+    </p>
+
+    <div class="formula">
+      <strong>Hot/Cold Tier Layout:</strong> After ~1000 insertions, vectors are sorted by
+      access frequency. Top 10% occupy a compact "hot" region; remainder in "cold" region.
+      HNSW navigation prefers hot vectors, reducing cache misses.
+    </div>
+
+    <h3 style="margin-top: 32px; margin-bottom: 16px;">StorageModeShared Zero-Copy</h3>
+    <p>
+      Metal buffers are allocated with <code>StorageModeShared</code>:
+    </p>
+    <pre>let buffer = device.newBuffer(bytes: data, length: size, options: .storageModeShared)
+// CPU reads/writes to buffer.contents()
+// GPU reads/writes via device.makeCommandBuffer()
+// No memcpy() between CPU/GPU</pre>
+
+    <p>
+      The CPU and GPU cache lines coordinate automatically. This is unique to Apple Silicon
+      and gives a decisive memory bandwidth advantage over discrete GPUs (PCIe ≈ 16 GB/s
+      vs. UMA ≈ 100 GB/s).
+    </p>
+  </div>
+</section>
+
+<!-- ─── Topological Reranking ─── -->
+<section>
+  <div class="container">
+    <div class="section-tag">Advanced Ranking</div>
+    <h2>Persistent Homology & Betti Numbers</h2>
+    <p>
+      Topological reranking uses persistent homology to detect and penalize hub-like nodes.
+      A vector that is "close" to many others may have low actual relevance. The β₁ Betti
+      number quantifies local cluster density — high values indicate a rich topology, suggesting
+      a "hub" node.
+    </p>
+
+    <h3 style="margin-top: 40px; margin-bottom: 16px;">Ego-Graph Construction</h3>
+    <p>
+      For each candidate in the top-K from Phase 2:
+    </p>
+    <ol style="margin-left: 20px; margin-top: 12px;">
+      <li>Build the neighborhood induced by edges among top-K and their HNSW neighbors.</li>
+      <li>Compute a distance matrix d(·,·) for the ego-graph.</li>
+      <li>Extract the (persistent) H₀ (components) and H₁ (loops) homology groups.</li>
+    </ol>
+
+    <h3 style="margin-top: 32px; margin-bottom: 16px;">Betti Number Extraction</h3>
+    <p>
+      The 1st Betti number β₁ counts independent loops in the ego-graph. High β₁ means
+      the candidate is surrounded by a rich, interconnected cluster. We use this as a
+      secondary scoring signal:
+    </p>
+
+    <div class="formula">
+      <strong>Rerank Score:</strong><br>
+      score = (RaBitQ distance) + λ × β₁(candidate)<br>
+      <br>
+      where λ is a tuning parameter. Candidates with high β₁ are penalized, promoting
+      boundary nodes (good representatives of local structure).
+    </div>
+
+    <h3 style="margin-top: 32px; margin-bottom: 16px;">Total Distance Metric</h3>
+    <p>
+      The complete metric combines quantized distance and topological penalty:
+    </p>
+
+    <div class="formula">
+      <strong>d_total(q, x) = d_rabitq(q, x) + λ × (β₁(x) − β₀(q))</strong><br>
+      <br>
+      β₀ is the number of connected components (usually 1 or close to 1).
+      β₁ penalizes over-connected hub nodes. This is cheap to compute (O(K²) for K ≤ 100)
+      and empirically improves precision@K.
+    </div>
+  </div>
+</section>
+
+<!-- ─── Concurrency Model ─── -->
+<section>
+  <div class="container">
+    <div class="section-tag">Live Indexing</div>
+    <h2>Concurrency & Auto-Publishing</h2>
+    <p>
+      Palace-X supports concurrent inserts and searches without blocking. New vectors can
+      be added while queries are in flight. Consistency is eventual: inserts are visible
+      after a snapshot publish.
+    </p>
+
+    <div class="arch-grid">
+      <div class="arch-card">
+        <div class="tag tag-green">DASHMAP</div>
+        <h3>Lock-Free Writes</h3>
+        <p>
+          DashMap is a concurrent hash map with fine-grained locking. Neighbor lists are
+          stored in DashMap entries, allowing multiple inserts to proceed in parallel without
+          global locks.
+        </p>
+      </div>
+      <div class="arch-card">
+        <div class="tag tag-purple">ARCSWAP</div>
+        <h3>Wait-Free Reads</h3>
+        <p>
+          ArcSwap is an atomic smart pointer enabling wait-free reads. Searches clone the
+          current index snapshot with zero spinning or lock contention.
+        </p>
+      </div>
+    </div>
+
+    <h3 style="margin-top: 40px; margin-bottom: 16px;">Insert Protocol</h3>
+    <p>
+      When a new vector is inserted:
+    </p>
+    <ol style="margin-left: 20px; margin-top: 12px;">
+      <li>Sample entry level and assign initial neighbors via DashMap writes.</li>
+      <li>Traversal links layer-by-layer; updates DashMap concurrently.</li>
+      <li>Increment a publish counter.</li>
+      <li>When counter reaches 1000, publish snapshot: ArcSwap(DashMap.clone()).</li>
+    </ol>
+
+    <div class="callout">
+      <strong>Auto-Publish Every 1000 Inserts:</strong> Snapshot publishing is expensive
+      (requires cloning the entire DashMap). Auto-publishing amortizes this cost: 1000 inserts
+      pay for 1 snapshot, ~0.1% overhead per insert. Searches always see recent state
+      (≤1000 inserts old).
+    </div>
+
+    <h3 style="margin-top: 32px; margin-bottom: 16px;">Search Protocol</h3>
+    <p>
+      Searches proceed without locks:
+    </p>
+    <ol style="margin-left: 20px; margin-top: 12px;">
+      <li>Acquire snapshot via <code>arc_swap.load()</code> (wait-free, no spinning).</li>
+      <li>Perform greedy descent and beam search on the snapshot.</li>
+      <li>Release snapshot (reference count decrements).</li>
+    </ol>
+
+    <p style="margin-top: 12px;">
+      If an insertion is publishing a snapshot concurrently, the insertion may block briefly.
+      All searches proceed unaffected.
+    </p>
+
+    <h3 style="margin-top: 32px; margin-bottom: 16px;">Memory Consistency</h3>
+    <p>
+      ArcSwap uses atomic release/acquire semantics to ensure that a search sees all inserts
+      that were completed before the snapshot was taken. New inserts after the snapshot
+      are buffered in DashMap; they appear in the next published snapshot.
+    </p>
+
+    <div class="formula">
+      <strong>Consistency Model:</strong> Writes are immediately visible to <em>future</em>
+      reads. Reads see a snapshot of all writes completed before the snapshot epoch.
+      This is "eventual consistency" with low latency: < 1ms for snapshot publish.
+    </div>
+  </div>
+</section>
+
+<!-- ─── Footer ─── -->
+<footer>
+  <div class="container">
+    <p>
+      © 2026 Maksym Dyachenko. Built with Rust.
+      <br>
+      <a href="https://github.com/Neirotunes/palace-x">GitHub</a> ·
+      <a href="mailto:max@neirosynth.com">Contact</a> ·
+      <a href="https://neirosynth.com">neirosynth.com</a>
+    </p>
+  </div>
+</footer>
+
+</body>
+</html>
