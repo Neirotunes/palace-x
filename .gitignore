@@ -22,3 +22,14 @@ Thumbs.db
 # Internal docs (not for public repo)
 Palace-X_GTM_Strategy.docx
 Palace-X_v5.1_Verified_Specification.md
+
+# Benchmark datasets and outputs
+/data/
+bench_output.txt
+alpha_results.txt
+*.log
+
+# Claude / agent workspace
+.claude/
+gen_pptx.py
+logo.png

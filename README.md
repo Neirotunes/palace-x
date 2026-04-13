@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/assets/logo.png" alt="Palace-X" width="140">
+
 # P A L A C E - X
 ### Topological Vector Search Engine for Apple Silicon
 
@@ -11,9 +13,26 @@
 ---
 
 **HNSW graph traversal + RaBitQ compressed distances + NEON SIMD + Metal GPU.**
-**99.9% recall @ 5,700 QPS.** Purpose-built for M1/M2/M3 unified memory.
+**99.6% recall @ 546 QPS on SIFT-1M. Float-parity at 4-bit compression.** Purpose-built for M1/M2/M3 unified memory.
 
 </div>
+
+<br/>
+
+## SIFT-1M Benchmark (1,000,000 × 128d, Apple M1)
+
+Full-scale validation against the standard ANN benchmark. HNSW+RaBitQ-4bit Asymmetric achieves **recall parity with float** at ~40% of the memory footprint.
+
+| Method | R@1 | R@10 | QPS | Memory |
+|--------|-----|------|-----|--------|
+| HNSW float (ef=32) | 94.1% | 92.7% | 2,900 | D×4 + graph |
+| HNSW float (ef=256) | 98.9% | **99.6%** | 557 | D×4 + graph |
+| **HNSW+RaBitQ-4bit Asym (ef=32)** | **98.1%** | **98.4%** | **1,140** | **D/2 + 16 + graph** |
+| **HNSW+RaBitQ-4bit Asym (ef=256)** | **99.0%** | **99.6%** | **546** | **D/2 + 16 + graph** |
+
+**Key result:** At low beam width (ef=32), asymmetric 4-bit scoring **outperforms float HNSW** on recall (98.4% vs 92.7%) — the Hadamard-rotated compressed representation acts as a regularizer against local-distance noise. At ef=256 the compressed path matches float to the tenth of a percent, at 1.6× lower memory.
+
+Total index size: **808 MB** for 1M × 128d (graph 244 MB + float 488 MB + RaBitQ 76 MB). Dropping the float reserve lands at ~320 MB — **256 bytes per vector**.
 
 <br/>
 

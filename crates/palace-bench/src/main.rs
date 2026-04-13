@@ -23,6 +23,7 @@ use rand::Rng;
 
 mod sift;
 mod sift_bench;
+mod sift1m_bench;
 
 // ─── Helpers ───────────────────────────────────────────────────────
 
@@ -962,13 +963,14 @@ fn bench_hnsw_rabitq(dims: usize, n: usize) {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let sift_only = args.iter().any(|a| a == "--sift" || a == "sift");
+    let sift1m = args.iter().any(|a| a == "--sift1m" || a == "sift1m");
 
     println!("╔══════════════════════════════════════════════════════╗");
     println!("║       Palace-X Benchmark Suite v0.1.0               ║");
     println!("║       Topological Memory for Autonomous Agents      ║");
     println!("╚══════════════════════════════════════════════════════╝");
 
-    if !sift_only {
+    if !sift_only && !sift1m {
         let dims = 384; // all-MiniLM-L6-v2 dimension
 
         bench_quantization(dims);
@@ -980,9 +982,11 @@ fn main() {
         bench_bitplane(dims);
     }
 
-    bench_sift(None); // SIFT-128 recall & QPS
+    if !sift1m {
+        bench_sift(None); // SIFT-128 recall & QPS
+    }
 
-    if !sift_only {
+    if !sift_only && !sift1m {
         let dims = 384;
         bench_rabitq_neon(dims, 10_000);
         bench_hnsw_rabitq(128, 10_000); // SIFT-dim for apples-to-apples comparison
@@ -1003,13 +1007,24 @@ fn main() {
 
     // ─── SIFT-10K BENCHMARK (comprehensive) ───
     let sift_data_dir = std::path::PathBuf::from("data");
-    if sift_data_dir.exists() || std::env::var("RUN_SIFT_BENCH").is_ok() {
+    if !sift1m && (sift_data_dir.exists() || std::env::var("RUN_SIFT_BENCH").is_ok()) {
         sift_bench::run_sift_benchmark(&sift_data_dir);
-    } else if !sift_only {
+    } else if !sift_only && !sift1m {
         println!("\n═══ SIFT-10K Benchmark: SKIPPED ═══");
         println!("  To run: mkdir -p data && cargo run -p palace-bench --release");
         println!("  Or: RUN_SIFT_BENCH=1 cargo run -p palace-bench --release");
         println!("  Dataset will be auto-downloaded on first run.");
+    }
+
+    // ─── SIFT-1M BENCHMARK ───
+    if sift1m || std::env::var("RUN_SIFT1M_BENCH").is_ok() {
+        let sift_data_dir = std::path::PathBuf::from("data");
+        sift1m_bench::run_sift1m_benchmark(&sift_data_dir);
+    } else if !sift_only {
+        println!("\n═══ SIFT-1M Benchmark: SKIPPED ═══");
+        println!("  To run: cargo run -p palace-bench --release -- --sift1m");
+        println!("  Or: RUN_SIFT1M_BENCH=1 cargo run -p palace-bench --release");
+        println!("  Dataset (~170 MB) will be auto-downloaded on first run.");
     }
 
     println!("\n✓ All benchmarks complete.");

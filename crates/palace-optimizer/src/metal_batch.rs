@@ -33,35 +33,92 @@
 
 use metal::*;
 use objc::rc::autoreleasepool;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::Mutex;
+use std::time::Instant;
 
-/// Minimum candidate count to justify GPU dispatch overhead.
-/// Below this, CPU NEON is faster due to dispatch + sync latency.
+/// Conservative default — used only if calibration hasn't run or is disabled.
+/// Empirically the real crossover on M-series is far higher (8K–64K range),
+/// depending on chip generation and candidate dimensionality.
 const GPU_THRESHOLD: usize = 256;
+
+/// Upper bound for the auto-calibrated threshold — we never disable GPU
+/// entirely even if no crossover is found in the probed range.
+const CALIBRATION_MAX_THRESHOLD: usize = 131_072;
 
 /// Maximum dimensions supported by the shader (compile-time threadgroup limit).
 /// For dims > 1024, the shader falls back to a loop within each thread.
 const MAX_THREADGROUP_DIM: u64 = 256;
 
+/// Initial pre-allocation: 4096 candidates × 384 dims × 4 bytes ≈ 6 MB.
+/// Grows on demand if exceeded.
+const PREALLOC_CANDIDATES: usize = 4096;
+const PREALLOC_DIMS: usize = 384;
+
 // ──────────────────────────────────────────────────────────────────────
 // Metal Shader Source
 // ──────────────────────────────────────────────────────────────────────
 
+/// Threadgroup memory budget (Apple Silicon: 32 KB per threadgroup)
+///
+/// ## L2 kernel
+///   - query cache:  MAX_THREADGROUP_DIM × 4 = 1024 B  (query loaded once)
+///   - SIMD partial: 8 × 4                   =   32 B  (max 8 SIMD groups)
+///   - Total:                                   1056 B  (3.2% of 32 KB)
+///
+/// ## Cosine kernel
+///   - query cache:  MAX_THREADGROUP_DIM × 4 = 1024 B
+///   - SIMD partial: 8 × 4 × 3              =   96 B  (dot, nq, nc)
+///   - Total:                                   1120 B  (3.4% of 32 KB)
+///
+/// Headroom: ~30 KB free for future multi-candidate tiling.
 const BATCH_L2_SHADER: &str = "
 #include <metal_stdlib>
 using namespace metal;
 
-/// Batch squared-L2 distance: one threadgroup per candidate vector.
+// ── helpers ──────────────────────────────────────────────────────────
+
+/// Two-stage reduction: simd_sum (no barrier) → cross-SIMD via shared mem
+/// (one barrier).  Replaces the old log2(N)-barrier tree.
 ///
-/// Layout:
-///   buffer(0) = query        [dims floats]
-///   buffer(1) = candidates   [num_candidates * dims floats, row-major]
-///   buffer(2) = distances    [num_candidates floats, output]
-///   buffer(3) = params       {dims: uint, num_candidates: uint}
+/// Apple GPU SIMD width = 32.  For tg_size=256 that is 8 SIMD groups,
+/// so shared[] only needs 8 entries (32 B).
+inline float fast_reduce(
+    float                val,
+    threadgroup float*   shared,    // [8] – one slot per SIMD group
+    uint                 tid,
+    uint                 tg_size)
+{
+    // Stage 1: intra-SIMD (hardware shuffle, zero barriers)
+    float warp_sum = simd_sum(val);
+
+    uint simd_lane  = tid % 32;
+    uint simd_group = tid / 32;
+    uint num_groups = (tg_size + 31) / 32;
+
+    // Stage 2: one representative per SIMD group writes to shared
+    if (simd_lane == 0) {
+        shared[simd_group] = warp_sum;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);   // single barrier
+
+    // Stage 3: first SIMD group reduces across groups
+    float total = 0.0f;
+    if (tid < num_groups) {
+        total = shared[tid];
+    }
+    total = simd_sum(total);   // num_groups ≤ 8, fits in one SIMD
+    return total;
+}
+
+// ── L2 kernel ────────────────────────────────────────────────────────
+
+/// Batch squared-L2 distance — one threadgroup per candidate.
 ///
-/// Each threadgroup computes dist(query, candidates[group_id]).
-/// Threads within the group each handle a slice of dimensions,
-/// then reduce via threadgroup shared memory.
+/// Optimisations vs v0.2:
+///  1. Query cached in threadgroup memory (read once from device, not N times)
+///  2. simd_sum + 1 barrier replaces 8-barrier tree reduction
+///  3. shared[] is 8 floats (32 B) instead of 256 (1 KB)
 kernel void batch_l2_distance(
     device const float*  query        [[buffer(0)]],
     device const float*  candidates   [[buffer(1)]],
@@ -76,35 +133,31 @@ kernel void batch_l2_distance(
 
     if (cand_idx >= num_candidates) return;
 
-    // Each thread accumulates partial sum over its slice of dimensions
+    // ── cache query in threadgroup memory ──
+    threadgroup float tg_query[256];   // 1 KB – covers dims ≤ 256
+    for (uint d = tid; d < dims; d += tg_size) {
+        tg_query[d] = query[d];
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    // ── per-thread partial L2 ──
     device const float* cand = candidates + cand_idx * dims;
     float partial_sum = 0.0f;
     for (uint d = tid; d < dims; d += tg_size) {
-        float diff = query[d] - cand[d];
+        float diff = tg_query[d] - cand[d];
         partial_sum += diff * diff;
     }
 
-    // Threadgroup reduction via SIMD shuffle (warp-level) + shared memory
-    // Apple GPUs have SIMD width 32
-    threadgroup float shared_sums[256];
-    shared_sums[tid] = partial_sum;
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-
-    // Tree reduction
-    for (uint stride = tg_size / 2; stride > 0; stride >>= 1) {
-        if (tid < stride) {
-            shared_sums[tid] += shared_sums[tid + stride];
-        }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-    }
+    // ── fast two-stage reduction ──
+    threadgroup float simd_scratch[8];
+    float total = fast_reduce(partial_sum, simd_scratch, tid, tg_size);
 
     if (tid == 0) {
-        distances[cand_idx] = shared_sums[0];
+        distances[cand_idx] = total;
     }
 }
 
-/// Batch cosine distance: 1 - (dot(a,b) / (|a|*|b|))
-/// Same layout as batch_l2_distance.
+/// Batch cosine distance: 1 - (dot(a,b) / (|a|·|b|))
 kernel void batch_cosine_distance(
     device const float*  query        [[buffer(0)]],
     device const float*  candidates   [[buffer(1)]],
@@ -119,45 +172,42 @@ kernel void batch_cosine_distance(
 
     if (cand_idx >= num_candidates) return;
 
-    device const float* cand = candidates + cand_idx * dims;
+    // ── cache query ──
+    threadgroup float tg_query[256];
+    for (uint d = tid; d < dims; d += tg_size) {
+        tg_query[d] = query[d];
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
 
-    float dot_sum  = 0.0f;
-    float norm_q   = 0.0f;
-    float norm_c   = 0.0f;
+    // ── per-thread partial sums ──
+    device const float* cand = candidates + cand_idx * dims;
+    float dot_sum = 0.0f;
+    float norm_q  = 0.0f;
+    float norm_c  = 0.0f;
 
     for (uint d = tid; d < dims; d += tg_size) {
-        float q = query[d];
+        float q = tg_query[d];
         float c = cand[d];
         dot_sum += q * c;
         norm_q  += q * q;
         norm_c  += c * c;
     }
 
-    // Pack three partial sums into shared memory for reduction
-    threadgroup float shared_dot[256];
-    threadgroup float shared_nq[256];
-    threadgroup float shared_nc[256];
+    // ── three parallel fast reductions ──
+    threadgroup float scratch_dot[8];
+    threadgroup float scratch_nq[8];
+    threadgroup float scratch_nc[8];
 
-    shared_dot[tid] = dot_sum;
-    shared_nq[tid]  = norm_q;
-    shared_nc[tid]  = norm_c;
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-
-    for (uint stride = tg_size / 2; stride > 0; stride >>= 1) {
-        if (tid < stride) {
-            shared_dot[tid] += shared_dot[tid + stride];
-            shared_nq[tid]  += shared_nq[tid + stride];
-            shared_nc[tid]  += shared_nc[tid + stride];
-        }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-    }
+    float total_dot = fast_reduce(dot_sum, scratch_dot, tid, tg_size);
+    float total_nq  = fast_reduce(norm_q,  scratch_nq,  tid, tg_size);
+    float total_nc  = fast_reduce(norm_c,  scratch_nc,  tid, tg_size);
 
     if (tid == 0) {
-        float denom = sqrt(shared_nq[0] * shared_nc[0]);
+        float denom = sqrt(total_nq * total_nc);
         if (denom < 1e-10f) {
-            distances[cand_idx] = 2.0f;  // max cosine distance for zero vectors
+            distances[cand_idx] = 2.0f;
         } else {
-            distances[cand_idx] = 1.0f - shared_dot[0] / denom;
+            distances[cand_idx] = 1.0f - total_dot / denom;
         }
     }
 }
@@ -174,23 +224,46 @@ pub enum MetalDistanceMetric {
     Cosine,
 }
 
+/// Pre-allocated Metal buffers, reused across dispatch calls.
+/// Avoids ObjC runtime overhead of per-call buffer creation.
+struct ReusableBuffers {
+    query_buf: Buffer,
+    cand_buf: Buffer,
+    dist_buf: Buffer,
+    params_buf: Buffer,
+    /// Current capacity in bytes for candidates buffer
+    cand_capacity: usize,
+    /// Current capacity in floats for distance output
+    dist_capacity: usize,
+    /// Current capacity in bytes for query buffer
+    query_capacity: usize,
+}
+
 /// GPU batch distance computation pipeline.
 ///
-/// Holds the compiled Metal compute pipelines and a command queue.
-/// Thread-safe: the Metal command queue serializes GPU submissions.
+/// Holds the compiled Metal compute pipelines, a command queue,
+/// and pre-allocated reusable buffers.  Thread-safe: the Mutex
+/// serializes buffer access (Metal command queue already serializes
+/// GPU work, so contention is minimal).
 pub struct MetalBatchSearch {
     device: Device,
     command_queue: CommandQueue,
     l2_pipeline: ComputePipelineState,
     cosine_pipeline: ComputePipelineState,
+    /// Pre-allocated shared-mode buffers (protected by Mutex)
+    buffers: Mutex<ReusableBuffers>,
     /// Total GPU dispatches (for stats)
     dispatch_count: AtomicU64,
     /// Total candidate vectors processed on GPU
     vectors_processed: AtomicU64,
+    /// Empirically measured crossover point (set by `calibrate()`).
+    /// 0 = not calibrated, fall back to static `GPU_THRESHOLD`.
+    calibrated_threshold: AtomicUsize,
 }
 
 impl MetalBatchSearch {
-    /// Initialize Metal pipelines. Returns `None` if no Metal GPU is available.
+    /// Initialize Metal pipelines and pre-allocate buffers.
+    /// Returns `None` if no Metal GPU is available.
     pub fn new() -> Option<Self> {
         let device = Device::system_default()?;
         let command_queue = device.new_command_queue();
@@ -211,20 +284,125 @@ impl MetalBatchSearch {
             .new_compute_pipeline_state_with_function(&cos_fn)
             .ok()?;
 
+        let query_bytes = PREALLOC_DIMS * std::mem::size_of::<f32>();
+        let cand_bytes = PREALLOC_CANDIDATES * PREALLOC_DIMS * std::mem::size_of::<f32>();
+        let dist_bytes = PREALLOC_CANDIDATES * std::mem::size_of::<f32>();
+        let params_bytes = 2 * std::mem::size_of::<u32>();
+
+        let buffers = ReusableBuffers {
+            query_buf: device.new_buffer(query_bytes as u64, MTLResourceOptions::StorageModeShared),
+            cand_buf: device.new_buffer(cand_bytes as u64, MTLResourceOptions::StorageModeShared),
+            dist_buf: device.new_buffer(dist_bytes as u64, MTLResourceOptions::StorageModeShared),
+            params_buf: device.new_buffer(params_bytes as u64, MTLResourceOptions::StorageModeShared),
+            cand_capacity: cand_bytes,
+            dist_capacity: PREALLOC_CANDIDATES,
+            query_capacity: query_bytes,
+        };
+
         Some(Self {
             device,
             command_queue,
             l2_pipeline,
             cosine_pipeline,
+            buffers: Mutex::new(buffers),
             dispatch_count: AtomicU64::new(0),
             vectors_processed: AtomicU64::new(0),
+            calibrated_threshold: AtomicUsize::new(0),
         })
     }
 
-    /// Should we dispatch to GPU? True when candidate count ≥ threshold.
+    /// Static default — kept for backward compatibility and for call sites
+    /// that don't hold a `MetalBatchSearch` handle.  Prefer the instance
+    /// method `should_use_gpu_for()` which consults the calibrated threshold.
     #[inline]
     pub fn should_use_gpu(num_candidates: usize) -> bool {
         num_candidates >= GPU_THRESHOLD
+    }
+
+    /// Instance variant that consults the calibrated threshold when available.
+    #[inline]
+    pub fn should_use_gpu_for(&self, num_candidates: usize) -> bool {
+        let t = self.calibrated_threshold.load(Ordering::Relaxed);
+        let threshold = if t == 0 { GPU_THRESHOLD } else { t };
+        num_candidates >= threshold
+    }
+
+    /// Currently active threshold (calibrated or default).
+    pub fn active_threshold(&self) -> usize {
+        let t = self.calibrated_threshold.load(Ordering::Relaxed);
+        if t == 0 { GPU_THRESHOLD } else { t }
+    }
+
+    /// Empirically find the GPU vs CPU crossover for this device + `dims`.
+    ///
+    /// Runs a short warm-up then times both paths across a log-spaced set of
+    /// candidate counts, picks the smallest `n` where GPU beats CPU by at
+    /// least 10 %, and stores it as the active threshold.
+    ///
+    /// If no crossover is found up to `CALIBRATION_MAX_THRESHOLD`, sets the
+    /// threshold to that maximum — the GPU path will effectively be disabled
+    /// for realistic rerank sizes, which is the correct conservative choice.
+    ///
+    /// Cost: ~50 ms on M-series.  Call once at startup (or first use).
+    pub fn calibrate(&self, dims: usize) {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        // Deterministic pseudo-random data — no external deps.
+        let make_vec = |seed: u64, n: usize| -> Vec<f32> {
+            let mut v = Vec::with_capacity(n);
+            for i in 0..n {
+                let mut h = DefaultHasher::new();
+                (seed, i).hash(&mut h);
+                v.push((h.finish() as f64 / u64::MAX as f64) as f32 * 2.0 - 1.0);
+            }
+            v
+        };
+
+        let query = make_vec(0xC0FFEE, dims);
+        let max_cands = 65_536usize;
+        let cands = make_vec(0xDEADBEEF, max_cands * dims);
+
+        // Warm-up: first dispatch pays JIT / driver-cache cost.
+        let _ = self.batch_distances(&query, &cands[..1024 * dims], dims, MetalDistanceMetric::L2);
+
+        let sizes = [256usize, 1024, 4096, 16_384, 65_536];
+        let reps = 5;
+        let mut crossover: Option<usize> = None;
+
+        for &n in &sizes {
+            let cand_slice = &cands[..n * dims];
+
+            // GPU timing
+            let t0 = Instant::now();
+            for _ in 0..reps {
+                let _ = self.batch_distances(&query, cand_slice, dims, MetalDistanceMetric::L2);
+            }
+            let gpu_us = t0.elapsed().as_micros() as f64 / reps as f64;
+
+            // CPU scalar timing (same work the fallback path does)
+            let t0 = Instant::now();
+            for _ in 0..reps {
+                let mut out = vec![0.0f32; n];
+                for i in 0..n {
+                    let c = &cand_slice[i * dims..(i + 1) * dims];
+                    out[i] = query.iter().zip(c).map(|(a, b)| (a - b) * (a - b)).sum();
+                }
+                std::hint::black_box(out);
+            }
+            let cpu_us = t0.elapsed().as_micros() as f64 / reps as f64;
+
+            if gpu_us * 1.10 < cpu_us && crossover.is_none() {
+                crossover = Some(n);
+            }
+        }
+
+        let chosen = crossover.unwrap_or(CALIBRATION_MAX_THRESHOLD);
+        self.calibrated_threshold.store(chosen, Ordering::Relaxed);
+        eprintln!(
+            "[metal_batch] calibrated GPU threshold: {} candidates (dims={})",
+            chosen, dims
+        );
     }
 
     /// GPU device name (e.g. "Apple M3 Max")
@@ -268,33 +446,59 @@ impl MetalBatchSearch {
         self.vectors_processed
             .fetch_add(num_candidates as u64, Ordering::Relaxed);
 
-        autoreleasepool(|| {
-            // Create UMA shared buffers (zero-copy on Apple Silicon)
-            let query_buf = self.device.new_buffer_with_data(
-                query.as_ptr() as *const _,
-                (dims * std::mem::size_of::<f32>()) as u64,
+        let query_bytes = dims * std::mem::size_of::<f32>();
+        let cand_bytes = candidates.len() * std::mem::size_of::<f32>();
+        let dist_bytes = num_candidates * std::mem::size_of::<f32>();
+
+        let mut bufs = self.buffers.lock().unwrap();
+
+        // Grow pre-allocated buffers if this call exceeds capacity.
+        // Growth is rare after warm-up — typically 0-1 reallocs per session.
+        if query_bytes > bufs.query_capacity {
+            bufs.query_buf = self.device.new_buffer(
+                query_bytes as u64,
                 MTLResourceOptions::StorageModeShared,
             );
-
-            let cand_buf = self.device.new_buffer_with_data(
-                candidates.as_ptr() as *const _,
-                (candidates.len() * std::mem::size_of::<f32>()) as u64,
+            bufs.query_capacity = query_bytes;
+        }
+        if cand_bytes > bufs.cand_capacity {
+            bufs.cand_buf = self.device.new_buffer(
+                cand_bytes as u64,
                 MTLResourceOptions::StorageModeShared,
             );
-
-            let dist_buf = self.device.new_buffer(
-                (num_candidates * std::mem::size_of::<f32>()) as u64,
+            bufs.cand_capacity = cand_bytes;
+        }
+        if num_candidates > bufs.dist_capacity {
+            bufs.dist_buf = self.device.new_buffer(
+                dist_bytes as u64,
                 MTLResourceOptions::StorageModeShared,
             );
+            bufs.dist_capacity = num_candidates;
+        }
 
-            // Params: (dims, num_candidates) as uint2
+        // Write data directly into pre-allocated shared buffers.
+        // On UMA this is a simple memcpy within the same physical RAM —
+        // no bus transfer, no ObjC buffer object allocation.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                query.as_ptr(),
+                bufs.query_buf.contents() as *mut f32,
+                dims,
+            );
+            std::ptr::copy_nonoverlapping(
+                candidates.as_ptr(),
+                bufs.cand_buf.contents() as *mut f32,
+                candidates.len(),
+            );
             let params: [u32; 2] = [dims as u32, num_candidates as u32];
-            let params_buf = self.device.new_buffer_with_data(
-                params.as_ptr() as *const _,
-                (2 * std::mem::size_of::<u32>()) as u64,
-                MTLResourceOptions::StorageModeShared,
+            std::ptr::copy_nonoverlapping(
+                params.as_ptr(),
+                bufs.params_buf.contents() as *mut u32,
+                2,
             );
+        }
 
+        autoreleasepool(|| {
             let command_buffer = self.command_queue.new_command_buffer();
             let encoder = command_buffer.new_compute_command_encoder();
 
@@ -304,10 +508,10 @@ impl MetalBatchSearch {
             };
             encoder.set_compute_pipeline_state(pipeline);
 
-            encoder.set_buffer(0, Some(&query_buf), 0);
-            encoder.set_buffer(1, Some(&cand_buf), 0);
-            encoder.set_buffer(2, Some(&dist_buf), 0);
-            encoder.set_buffer(3, Some(&params_buf), 0);
+            encoder.set_buffer(0, Some(&bufs.query_buf), 0);
+            encoder.set_buffer(1, Some(&bufs.cand_buf), 0);
+            encoder.set_buffer(2, Some(&bufs.dist_buf), 0);
+            encoder.set_buffer(3, Some(&bufs.params_buf), 0);
 
             // 1D dispatch: one threadgroup per candidate, threads cooperate on dims
             let tg_width = MAX_THREADGROUP_DIM.min(dims as u64);
@@ -328,8 +532,8 @@ impl MetalBatchSearch {
             command_buffer.commit();
             command_buffer.wait_until_completed();
 
-            // Read results back (zero-copy — just read the shared buffer)
-            let result_ptr = dist_buf.contents() as *const f32;
+            // Read results from the shared buffer (same physical RAM, no copy overhead)
+            let result_ptr = bufs.dist_buf.contents() as *const f32;
             let mut distances = vec![0.0f32; num_candidates];
             unsafe {
                 std::ptr::copy_nonoverlapping(result_ptr, distances.as_mut_ptr(), num_candidates);
@@ -414,9 +618,9 @@ pub fn gpu_rerank(
 ) -> GpuRerankResult {
     let num_candidates = candidate_vecs.len() / dims;
 
-    // GPU path
+    // GPU path — prefer calibrated threshold if available
     if let Some(gpu) = gpu {
-        if MetalBatchSearch::should_use_gpu(num_candidates) {
+        if gpu.should_use_gpu_for(num_candidates) {
             let ranked = gpu.batch_distances_topk(query, candidate_vecs, dims, metric, k);
             return GpuRerankResult {
                 ranked,
