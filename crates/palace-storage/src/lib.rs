@@ -25,6 +25,6 @@ pub mod hnsw_rabitq;
 pub mod memory_palace;
 pub mod stats;
 
-pub use hnsw_rabitq::{HnswRaBitQ, HnswRaBitQConfig, RaBitQSearchResult};
+pub use hnsw_rabitq::{HnswRaBitQ, HnswRaBitQConfig, RaBitQSearchResult, SearchMode};
 pub use memory_palace::MemoryPalace;
 pub use stats::PalaceStats;

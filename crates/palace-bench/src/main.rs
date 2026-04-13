@@ -790,27 +790,29 @@ fn bench_hnsw_rabitq(dims: usize, n: usize) {
     );
     let mut rng = rand::thread_rng();
 
-    // Build combined index (4-bit, no float rerank)
-    let config_pure = palace_storage::HnswRaBitQConfig {
+    // Build combined index — Asymmetric mode (default, recommended)
+    let config_asym = palace_storage::HnswRaBitQConfig {
         dimensions: dims,
         max_neighbors: 16,
         ef_construction: 200,
         rabitq_bits: 4,
         rerank_top: 0,
+        search_mode: palace_storage::SearchMode::Asymmetric,
         ..Default::default()
     };
-    let combined = palace_storage::HnswRaBitQ::new(config_pure);
+    let combined = palace_storage::HnswRaBitQ::new(config_asym);
 
-    // Build combined index with float rerank
-    let config_rerank = palace_storage::HnswRaBitQConfig {
+    // Build combined index — RaBitQ beam mode (experimental)
+    let config_rq_beam = palace_storage::HnswRaBitQConfig {
         dimensions: dims,
         max_neighbors: 16,
         ef_construction: 200,
         rabitq_bits: 4,
         rerank_top: 50,
+        search_mode: palace_storage::SearchMode::RaBitQBeam,
         ..Default::default()
     };
-    let combined_rerank = palace_storage::HnswRaBitQ::new(config_rerank);
+    let combined_rerank = palace_storage::HnswRaBitQ::new(config_rq_beam);
 
     // Build pure float HNSW as baseline
     let pure_hnsw = HnswIndex::new(dims, 16, 200);
@@ -867,11 +869,11 @@ fn bench_hnsw_rabitq(dims: usize, n: usize) {
         })
         .collect();
 
-    // Benchmark configs
+    // Benchmark configs (asymmetric mode — float beam + RaBitQ rerank)
     let configs: Vec<(&str, usize)> = vec![
-        ("HNSW+RaBitQ ef=32", 32),
-        ("HNSW+RaBitQ ef=64", 64),
-        ("HNSW+RaBitQ ef=128", 128),
+        ("Asymmetric ef=32", 32),
+        ("Asymmetric ef=64", 64),
+        ("Asymmetric ef=128", 128),
     ];
 
     println!("\n  ┌──────────────────────────────┬──────────┬──────────┬──────────┐");
@@ -946,7 +948,7 @@ fn bench_hnsw_rabitq(dims: usize, n: usize) {
     let rerank_speedup = rerank_qps / hnsw_qps;
     println!(
         "  │ {:<28} │ {:>6.1}%  │ {:>8.0} │  {:>5.2}x  │",
-        "HNSW+RaBitQ ef=128+rerank50",
+        "RaBitQ-beam ef=128+rerank50",
         rerank_recall * 100.0,
         rerank_qps,
         rerank_speedup
