@@ -109,6 +109,85 @@ pub fn load_sift10k(data_dir: &Path) -> io::Result<SiftDataset> {
     })
 }
 
+/// Load SIFT-1M dataset. Downloads if not cached (~170 MB compressed).
+pub fn load_sift1m(data_dir: &Path) -> io::Result<SiftDataset> {
+    let sift_dir = data_dir.join("sift");
+    let base_path = sift_dir.join("sift_base.fvecs");
+
+    if !base_path.exists() {
+        download_sift1m(data_dir)?;
+    }
+
+    let base = load_fvecs(sift_dir.join("sift_base.fvecs"))?;
+    let queries = load_fvecs(sift_dir.join("sift_query.fvecs"))?;
+    let ground_truth = load_ivecs(sift_dir.join("sift_groundtruth.ivecs"))?;
+
+    let dim = if base.is_empty() { 128 } else { base[0].len() };
+
+    eprintln!(
+        "SIFT-1M loaded: {} base ({}d), {} queries, {} ground truth",
+        base.len(),
+        dim,
+        queries.len(),
+        ground_truth.len()
+    );
+
+    Ok(SiftDataset {
+        base,
+        queries,
+        ground_truth,
+        dim,
+    })
+}
+
+fn download_sift1m(data_dir: &Path) -> io::Result<()> {
+    fs::create_dir_all(data_dir)?;
+    let tar_path = data_dir.join("sift.tar.gz");
+
+    if !tar_path.exists() {
+        eprintln!("Downloading SIFT-1M dataset (~170 MB)...");
+        let urls = [
+            "http://corpus-texmex.irisa.fr/sift.tar.gz",
+            "ftp://ftp.irisa.fr/local/texmex/corpus/sift.tar.gz",
+        ];
+
+        let mut ok = false;
+        for url in &urls {
+            eprintln!("  Trying: {}", url);
+            let status = Command::new("curl")
+                .args(["-fSL", "--connect-timeout", "60", "-o"])
+                .arg(&tar_path)
+                .arg(url)
+                .status();
+            if matches!(status, Ok(s) if s.success()) {
+                ok = true;
+                break;
+            }
+            let _ = fs::remove_file(&tar_path);
+        }
+        if !ok {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "Failed to download SIFT-1M. Download manually:\n\
+                 curl -O http://corpus-texmex.irisa.fr/sift.tar.gz\n\
+                 tar xzf sift.tar.gz -C data/",
+            ));
+        }
+    }
+
+    eprintln!("Extracting SIFT-1M...");
+    let status = Command::new("tar")
+        .args(["xzf"])
+        .arg(&tar_path)
+        .arg("-C")
+        .arg(data_dir)
+        .status()?;
+    if !status.success() {
+        return Err(io::Error::new(io::ErrorKind::Other, "tar extract failed"));
+    }
+    Ok(())
+}
+
 fn download_siftsmall(data_dir: &Path) -> io::Result<()> {
     fs::create_dir_all(data_dir)?;
     let tar_path = data_dir.join("siftsmall.tar.gz");
