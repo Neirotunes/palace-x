@@ -89,8 +89,11 @@ jobs:
       - name: Check recall thresholds
         run: |
           echo "=== Recall Regression Check ==="
-          # Extract RaBitQ 1-bit R@10
-          R10=$(grep -oP 'RaBitQ 1-bit.*?R@10:\s*\K[0-9.]+' bench_output.txt || echo "0")
+          # Extract RaBitQ 1-bit R@10 from the results table.
+          # Works on BSD grep (macOS) — awk parses the pipe-delimited row.
+          # Table format: | RaBitQ 1-bit | R@1% | R@10% | R@100% | QPS | mem |
+          R10=$(awk -F'|' '/RaBitQ 1-bit/ { gsub(/[[:space:]%]/, "", $4); print $4; exit }' bench_output.txt)
+          if [ -z "$R10" ]; then R10="0"; fi
           echo "RaBitQ 1-bit R@10 = ${R10}%"
           # Fail if recall dropped below 45% (current: ~54%, allows some variance)
           python3 -c "
