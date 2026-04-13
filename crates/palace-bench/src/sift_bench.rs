@@ -39,33 +39,81 @@ pub fn run_sift_benchmark(data_dir: &Path) {
     // ─── Brute-force cosine baseline ──────────────────────────
     {
         let (r1, r10, r100, qps) = bench_brute_force_cosine(&dataset);
-        println!("Brute-force cosine: R@1={:.1}% R@10={:.1}% R@100={:.1}% QPS={:.0}",
-            r1*100.0, r10*100.0, r100*100.0, qps);
-        results.push(("Brute-force cosine".into(), r1, r10, r100, qps, "D×4 B".into()));
+        println!(
+            "Brute-force cosine: R@1={:.1}% R@10={:.1}% R@100={:.1}% QPS={:.0}",
+            r1 * 100.0,
+            r10 * 100.0,
+            r100 * 100.0,
+            qps
+        );
+        results.push((
+            "Brute-force cosine".into(),
+            r1,
+            r10,
+            r100,
+            qps,
+            "D×4 B".into(),
+        ));
     }
 
     // ─── Naive binary (Hamming brute-force) ───────────────────
     {
         let (r1, r10, r100, qps) = bench_naive_binary(&dataset);
-        println!("Naive binary: R@1={:.1}% R@10={:.1}% R@100={:.1}% QPS={:.0}",
-            r1*100.0, r10*100.0, r100*100.0, qps);
-        results.push(("Naive binary (Hamming)".into(), r1, r10, r100, qps, "D/8 B".into()));
+        println!(
+            "Naive binary: R@1={:.1}% R@10={:.1}% R@100={:.1}% QPS={:.0}",
+            r1 * 100.0,
+            r10 * 100.0,
+            r100 * 100.0,
+            qps
+        );
+        results.push((
+            "Naive binary (Hamming)".into(),
+            r1,
+            r10,
+            r100,
+            qps,
+            "D/8 B".into(),
+        ));
     }
 
     // ─── RaBitQ 1-bit brute-force ─────────────────────────────
     {
         let (r1, r10, r100, qps) = bench_rabitq_brute(&dataset, &centroid, 1);
-        println!("RaBitQ 1-bit: R@1={:.1}% R@10={:.1}% R@100={:.1}% QPS={:.0}",
-            r1*100.0, r10*100.0, r100*100.0, qps);
-        results.push(("RaBitQ 1-bit (brute)".into(), r1, r10, r100, qps, "D/8+16 B".into()));
+        println!(
+            "RaBitQ 1-bit: R@1={:.1}% R@10={:.1}% R@100={:.1}% QPS={:.0}",
+            r1 * 100.0,
+            r10 * 100.0,
+            r100 * 100.0,
+            qps
+        );
+        results.push((
+            "RaBitQ 1-bit (brute)".into(),
+            r1,
+            r10,
+            r100,
+            qps,
+            "D/8+16 B".into(),
+        ));
     }
 
     // ─── RaBitQ 4-bit brute-force ─────────────────────────────
     {
         let (r1, r10, r100, qps) = bench_rabitq_brute(&dataset, &centroid, 4);
-        println!("RaBitQ 4-bit: R@1={:.1}% R@10={:.1}% R@100={:.1}% QPS={:.0}",
-            r1*100.0, r10*100.0, r100*100.0, qps);
-        results.push(("RaBitQ 4-bit (brute)".into(), r1, r10, r100, qps, "D/2+16 B".into()));
+        println!(
+            "RaBitQ 4-bit: R@1={:.1}% R@10={:.1}% R@100={:.1}% QPS={:.0}",
+            r1 * 100.0,
+            r10 * 100.0,
+            r100 * 100.0,
+            qps
+        );
+        results.push((
+            "RaBitQ 4-bit (brute)".into(),
+            r1,
+            r10,
+            r100,
+            qps,
+            "D/2+16 B".into(),
+        ));
     }
 
     // ─── NSW + RaBitQ reranking ───────────────────────────────
@@ -74,7 +122,12 @@ pub fn run_sift_benchmark(data_dir: &Path) {
     println!("\nBuilding NSW index ({} vectors)...", dataset.base.len());
     let t0 = Instant::now();
     for (i, vec) in dataset.base.iter().enumerate() {
-        nsw.insert(vec.clone(), MetaData { label: format!("{}", i) });
+        nsw.insert(
+            vec.clone(),
+            MetaData {
+                label: format!("{}", i),
+            },
+        );
     }
     nsw.update_hub_scores();
     let build_time = t0.elapsed();
@@ -85,33 +138,57 @@ pub fn run_sift_benchmark(data_dir: &Path) {
     let codes_1bit: Vec<RaBitQCode> = dataset.base.iter().map(|v| rq1.encode(v)).collect();
 
     let rq4 = RaBitQIndex::with_centroid(dataset.dim, centroid.clone(), 42);
-    let codes_4bit: Vec<RaBitQCode> = dataset.base.iter().map(|v| rq4.encode_multibit(v, 4)).collect();
+    let codes_4bit: Vec<RaBitQCode> = dataset
+        .base
+        .iter()
+        .map(|v| rq4.encode_multibit(v, 4))
+        .collect();
 
     for &ef in &[32usize, 64, 128, 256] {
         // NSW search → cosine rerank
         {
             let (r1, r10, r100, qps) = bench_nsw_search(&dataset, &nsw, ef);
             let label = format!("NSW cosine (ef={})", ef);
-            println!("{}: R@1={:.1}% R@10={:.1}% R@100={:.1}% QPS={:.0}",
-                label, r1*100.0, r10*100.0, r100*100.0, qps);
+            println!(
+                "{}: R@1={:.1}% R@10={:.1}% R@100={:.1}% QPS={:.0}",
+                label,
+                r1 * 100.0,
+                r10 * 100.0,
+                r100 * 100.0,
+                qps
+            );
             results.push((label, r1, r10, r100, qps, "D×4+graph B".into()));
         }
 
         // NSW → RaBitQ 1-bit rerank
         {
-            let (r1, r10, r100, qps) = bench_nsw_rabitq_rerank(&dataset, &nsw, &rq1, &codes_1bit, ef);
+            let (r1, r10, r100, qps) =
+                bench_nsw_rabitq_rerank(&dataset, &nsw, &rq1, &codes_1bit, ef);
             let label = format!("NSW + RaBitQ-1bit (ef={})", ef);
-            println!("{}: R@1={:.1}% R@10={:.1}% R@100={:.1}% QPS={:.0}",
-                label, r1*100.0, r10*100.0, r100*100.0, qps);
+            println!(
+                "{}: R@1={:.1}% R@10={:.1}% R@100={:.1}% QPS={:.0}",
+                label,
+                r1 * 100.0,
+                r10 * 100.0,
+                r100 * 100.0,
+                qps
+            );
             results.push((label, r1, r10, r100, qps, "D/8+16+graph B".into()));
         }
 
         // NSW → RaBitQ 4-bit rerank
         {
-            let (r1, r10, r100, qps) = bench_nsw_rabitq_rerank(&dataset, &nsw, &rq4, &codes_4bit, ef);
+            let (r1, r10, r100, qps) =
+                bench_nsw_rabitq_rerank(&dataset, &nsw, &rq4, &codes_4bit, ef);
             let label = format!("NSW + RaBitQ-4bit (ef={})", ef);
-            println!("{}: R@1={:.1}% R@10={:.1}% R@100={:.1}% QPS={:.0}",
-                label, r1*100.0, r10*100.0, r100*100.0, qps);
+            println!(
+                "{}: R@1={:.1}% R@10={:.1}% R@100={:.1}% QPS={:.0}",
+                label,
+                r1 * 100.0,
+                r10 * 100.0,
+                r100 * 100.0,
+                qps
+            );
             results.push((label, r1, r10, r100, qps, "D/2+16+graph B".into()));
         }
     }
@@ -145,11 +222,16 @@ fn bench_brute_force_cosine(dataset: &SiftDataset) -> (f32, f32, f32, f64) {
 
     let start = Instant::now();
     for (qi, query) in dataset.queries.iter().enumerate() {
-        let mut dists: Vec<(usize, f32)> = dataset.base
+        let mut dists: Vec<(usize, f32)> = dataset
+            .base
             .iter()
             .enumerate()
             .map(|(i, b)| {
-                let d: f32 = b.iter().zip(query.iter()).map(|(a, q)| (a - q) * (a - q)).sum();
+                let d: f32 = b
+                    .iter()
+                    .zip(query.iter())
+                    .map(|(a, q)| (a - q) * (a - q))
+                    .sum();
                 (i, d)
             })
             .collect();
@@ -198,7 +280,8 @@ fn bench_naive_binary(dataset: &SiftDataset) -> (f32, f32, f32, f64) {
 
 fn bench_rabitq_brute(dataset: &SiftDataset, centroid: &[f32], bits: u8) -> (f32, f32, f32, f64) {
     let rq = RaBitQIndex::with_centroid(dataset.dim, centroid.to_vec(), 42);
-    let codes: Vec<RaBitQCode> = dataset.base
+    let codes: Vec<RaBitQCode> = dataset
+        .base
         .iter()
         .map(|v| rq.encode_multibit(v, bits))
         .collect();

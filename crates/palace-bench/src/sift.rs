@@ -244,7 +244,11 @@ pub fn recall_at_k(retrieved: &[usize], ground_truth: &[u32], k: usize) -> f32 {
     }
     let gt_set: std::collections::HashSet<usize> =
         ground_truth.iter().take(k).map(|&x| x as usize).collect();
-    let hits = retrieved.iter().take(k).filter(|id| gt_set.contains(id)).count();
+    let hits = retrieved
+        .iter()
+        .take(k)
+        .filter(|id| gt_set.contains(id))
+        .count();
     hits as f32 / k_actual as f32
 }
 
@@ -280,9 +284,7 @@ pub fn compute_ground_truth_l2(base: &[Vec<f32>], queries: &[Vec<f32>], k: usize
 }
 
 /// Format results as a Markdown table.
-pub fn format_results_table(
-    results: &[(String, f32, f32, f32, f64, String)],
-) -> String {
+pub fn format_results_table(results: &[(String, f32, f32, f32, f64, String)]) -> String {
     let mut t = String::new();
     t.push_str("| Method | Recall@1 | Recall@10 | Recall@100 | QPS | Memory/vec |\n");
     t.push_str("|--------|----------|-----------|------------|-----|------------|\n");

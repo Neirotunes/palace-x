@@ -183,7 +183,12 @@ fn test_alpha_pruning_recall_comparison() {
         let mut vectors = Vec::with_capacity(n);
         for i in 0..n {
             let v = random_vector_seeded(&mut rng, dim);
-            index.insert(v.clone(), MetaData { label: format!("{}", i) });
+            index.insert(
+                v.clone(),
+                MetaData {
+                    label: format!("{}", i),
+                },
+            );
             vectors.push(v);
         }
         index.update_hub_scores();

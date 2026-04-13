@@ -237,7 +237,8 @@ pub fn h1_persistence(
 
     // Enumerate triangles with filtration value = max edge weight
     let mut triangles: Vec<(f32, NodeId, NodeId, NodeId)> = Vec::new();
-    let vertex_set: std::collections::HashSet<NodeId> = ego_graph.vertices.iter().copied().collect();
+    let vertex_set: std::collections::HashSet<NodeId> =
+        ego_graph.vertices.iter().copied().collect();
 
     for &u in &ego_graph.vertices {
         if let Some(neighbors_u) = adj.get(&u) {
@@ -416,10 +417,7 @@ mod tests {
 
     #[test]
     fn test_h0_single_edge() {
-        let ego = build_ego(
-            vec![NodeId(0), NodeId(1)],
-            vec![(NodeId(0), NodeId(1))],
-        );
+        let ego = build_ego(vec![NodeId(0), NodeId(1)], vec![(NodeId(0), NodeId(1))]);
         let diagram = h0_persistence(&ego, &simple_weight);
         // One merge: component dies
         assert_eq!(diagram.pairs.len(), 1);
@@ -515,13 +513,20 @@ mod tests {
         let d_line = d_total_persistence(0.5, &line, &simple_weight, 0.5, 0.5, 1.0);
 
         // Both should produce valid finite distances
-        assert!(d_sq.is_finite() && d_sq > 0.0, "Square d_total should be finite positive");
-        assert!(d_line.is_finite() && d_line > 0.0, "Line d_total should be finite positive");
+        assert!(
+            d_sq.is_finite() && d_sq > 0.0,
+            "Square d_total should be finite positive"
+        );
+        assert!(
+            d_line.is_finite() && d_line > 0.0,
+            "Line d_total should be finite positive"
+        );
         // Square has persistence signal, line does not — they should differ
         assert!(
             (d_sq - d_line).abs() > 1e-6,
             "Square ({}) and line ({}) should have different d_total due to topology",
-            d_sq, d_line
+            d_sq,
+            d_line
         );
     }
 

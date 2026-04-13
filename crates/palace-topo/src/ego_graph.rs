@@ -247,7 +247,11 @@ impl EgoGraph {
     /// let ego = EgoGraph::build_pair(...)
     ///     .cap_by_weight(500, |u, v| cosine_distance(u, v));
     /// ```
-    pub fn cap_by_weight(mut self, max_edges: usize, weight_fn: impl Fn(NodeId, NodeId) -> f32) -> Self {
+    pub fn cap_by_weight(
+        mut self,
+        max_edges: usize,
+        weight_fn: impl Fn(NodeId, NodeId) -> f32,
+    ) -> Self {
         if self.edges.len() > max_edges {
             // Compute weights and sort by weight ascending
             let mut weighted_edges: Vec<_> = self
@@ -255,7 +259,8 @@ impl EgoGraph {
                 .iter()
                 .map(|&(u, v)| (weight_fn(u, v), u, v))
                 .collect();
-            weighted_edges.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+            weighted_edges
+                .sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 
             // Keep only top max_edges
             self.edges = weighted_edges

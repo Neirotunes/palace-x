@@ -82,7 +82,10 @@ pub unsafe fn sphere_frustum_cull_neon(
     assert_eq!(cy.len(), n, "cy length mismatch");
     assert_eq!(cz.len(), n, "cz length mismatch");
     assert_eq!(radii.len(), n, "radii length mismatch");
-    assert!(n <= 32, "sphere_frustum_cull_neon: max 32 spheres (bitmask is u32)");
+    assert!(
+        n <= 32,
+        "sphere_frustum_cull_neon: max 32 spheres (bitmask is u32)"
+    );
     let nx = vdupq_n_f32(plane[0]);
     let ny = vdupq_n_f32(plane[1]);
     let nz = vdupq_n_f32(plane[2]);
@@ -134,7 +137,13 @@ pub unsafe fn sphere_frustum_cull_neon(
 /// Panics if slice lengths differ.
 #[cfg(target_arch = "aarch64")]
 pub unsafe fn dot_product_neon(a: &[f32], b: &[f32]) -> f32 {
-    assert_eq!(a.len(), b.len(), "dot_product_neon: length mismatch ({} vs {})", a.len(), b.len());
+    assert_eq!(
+        a.len(),
+        b.len(),
+        "dot_product_neon: length mismatch ({} vs {})",
+        a.len(),
+        b.len()
+    );
     let mut sumv = vdupq_n_f32(0.0);
     let chunks = a.len() / 4;
 

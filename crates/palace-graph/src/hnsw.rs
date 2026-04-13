@@ -121,12 +121,24 @@ pub struct HnswIndex {
 impl HnswIndex {
     /// Create a new HNSW index with L2 metric (recommended for SIFT/raw features)
     pub fn new(dimensions: usize, max_neighbors: usize, ef_construction: usize) -> Self {
-        Self::with_params(dimensions, max_neighbors, ef_construction, 1.2, HnswDistanceMetric::L2)
+        Self::with_params(
+            dimensions,
+            max_neighbors,
+            ef_construction,
+            1.2,
+            HnswDistanceMetric::L2,
+        )
     }
 
     /// Create with cosine metric (for normalized embeddings)
     pub fn with_cosine(dimensions: usize, max_neighbors: usize, ef_construction: usize) -> Self {
-        Self::with_params(dimensions, max_neighbors, ef_construction, 1.2, HnswDistanceMetric::Cosine)
+        Self::with_params(
+            dimensions,
+            max_neighbors,
+            ef_construction,
+            1.2,
+            HnswDistanceMetric::Cosine,
+        )
     }
 
     /// Create with full parameter control
@@ -251,18 +263,19 @@ impl HnswIndex {
                 // Add bidirectional connections and prune if needed
                 for &neighbor_id in &selected {
                     // Step 1: add connection, check if pruning needed
-                    let needs_prune = if let Some(mut neighbor_ref) = self.nodes.get_mut(&neighbor_id) {
-                        if lc < neighbor_ref.neighbors.len() {
-                            if !neighbor_ref.neighbors[lc].contains(&id) {
-                                neighbor_ref.neighbors[lc].push(id);
+                    let needs_prune =
+                        if let Some(mut neighbor_ref) = self.nodes.get_mut(&neighbor_id) {
+                            if lc < neighbor_ref.neighbors.len() {
+                                if !neighbor_ref.neighbors[lc].contains(&id) {
+                                    neighbor_ref.neighbors[lc].push(id);
+                                }
+                                neighbor_ref.neighbors[lc].len() > max_m
+                            } else {
+                                false
                             }
-                            neighbor_ref.neighbors[lc].len() > max_m
                         } else {
                             false
-                        }
-                    } else {
-                        false
-                    };
+                        };
                     // get_mut dropped here — safe to read other nodes
 
                     // Step 2: prune if over capacity (no concurrent lock held)
@@ -277,10 +290,13 @@ impl HnswIndex {
                         let nb_list: Vec<(NodeId, f32)> = nb_ids
                             .iter()
                             .filter_map(|&nid| {
-                                self.nodes.get(&nid).map(|n| (nid, self.dist(&neighbor_vec, &n.vector)))
+                                self.nodes
+                                    .get(&nid)
+                                    .map(|n| (nid, self.dist(&neighbor_vec, &n.vector)))
                             })
                             .collect();
-                        let pruned = self.select_neighbors_heuristic(&neighbor_vec, &nb_list, max_m, lc);
+                        let pruned =
+                            self.select_neighbors_heuristic(&neighbor_vec, &nb_list, max_m, lc);
                         if let Some(mut neighbor_ref) = self.nodes.get_mut(&neighbor_id) {
                             if lc < neighbor_ref.neighbors.len() {
                                 neighbor_ref.neighbors[lc] = pruned;
@@ -321,13 +337,17 @@ impl HnswIndex {
     /// Greedy 1-NN search at a single layer (for navigational descent)
     fn search_layer_greedy(&self, query: &[f32], entry: NodeId, layer: usize) -> NodeId {
         let mut current = entry;
-        let mut current_dist = self.nodes.get(&current)
+        let mut current_dist = self
+            .nodes
+            .get(&current)
             .map(|n| self.dist(query, &n.vector))
             .unwrap_or(f32::MAX);
 
         loop {
             let mut improved = false;
-            let neighbors: Vec<NodeId> = self.nodes.get(&current)
+            let neighbors: Vec<NodeId> = self
+                .nodes
+                .get(&current)
                 .map(|n| {
                     if layer < n.neighbors.len() {
                         n.neighbors[layer].clone()
@@ -364,7 +384,9 @@ impl HnswIndex {
         ef: usize,
         layer: usize,
     ) -> Vec<(NodeId, f32)> {
-        let entry_dist = self.nodes.get(&entry)
+        let entry_dist = self
+            .nodes
+            .get(&entry)
             .map(|n| self.dist(query, &n.vector))
             .unwrap_or(f32::MAX);
 
@@ -373,13 +395,23 @@ impl HnswIndex {
 
         // Min-heap: closest candidates to explore
         let mut candidates = BinaryHeap::new();
-        candidates.push(Candidate { id: entry, distance: entry_dist });
+        candidates.push(Candidate {
+            id: entry,
+            distance: entry_dist,
+        });
 
         // Max-heap: farthest in result set (for pruning)
         let mut result = BinaryHeap::new();
-        result.push(FarCandidate { id: entry, distance: entry_dist });
+        result.push(FarCandidate {
+            id: entry,
+            distance: entry_dist,
+        });
 
-        while let Some(Candidate { id: current, distance: current_dist }) = candidates.pop() {
+        while let Some(Candidate {
+            id: current,
+            distance: current_dist,
+        }) = candidates.pop()
+        {
             // Stop if closest unexplored is farther than farthest result
             let farthest_result_dist = result.peek().map(|r| r.distance).unwrap_or(f32::MAX);
             if current_dist > farthest_result_dist && result.len() >= ef {
@@ -387,7 +419,9 @@ impl HnswIndex {
             }
 
             // Explore neighbors at this layer
-            let neighbors: Vec<NodeId> = self.nodes.get(&current)
+            let neighbors: Vec<NodeId> = self
+                .nodes
+                .get(&current)
                 .map(|n| {
                     if layer < n.neighbors.len() {
                         n.neighbors[layer].clone()
@@ -408,8 +442,14 @@ impl HnswIndex {
 
                     let farthest = result.peek().map(|r| r.distance).unwrap_or(f32::MAX);
                     if d < farthest || result.len() < ef {
-                        candidates.push(Candidate { id: nb_id, distance: d });
-                        result.push(FarCandidate { id: nb_id, distance: d });
+                        candidates.push(Candidate {
+                            id: nb_id,
+                            distance: d,
+                        });
+                        result.push(FarCandidate {
+                            id: nb_id,
+                            distance: d,
+                        });
 
                         if result.len() > ef {
                             result.pop(); // remove farthest
@@ -420,10 +460,8 @@ impl HnswIndex {
         }
 
         // Drain result heap into sorted vec
-        let mut results: Vec<(NodeId, f32)> = result
-            .into_iter()
-            .map(|fc| (fc.id, fc.distance))
-            .collect();
+        let mut results: Vec<(NodeId, f32)> =
+            result.into_iter().map(|fc| (fc.id, fc.distance)).collect();
         results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
         results
     }
@@ -546,13 +584,23 @@ impl HnswIndex {
         // Greedy descent using Hamming at upper layers
         let mut current = ep;
         for lc in (1..=ep_level).rev() {
-            let mut current_dist = self.nodes.get(&current)
+            let mut current_dist = self
+                .nodes
+                .get(&current)
                 .map(|n| hamming_distance(&n.binary, query_binary))
                 .unwrap_or(u32::MAX);
             loop {
                 let mut improved = false;
-                let neighbors: Vec<NodeId> = self.nodes.get(&current)
-                    .map(|n| if lc < n.neighbors.len() { n.neighbors[lc].clone() } else { Vec::new() })
+                let neighbors: Vec<NodeId> = self
+                    .nodes
+                    .get(&current)
+                    .map(|n| {
+                        if lc < n.neighbors.len() {
+                            n.neighbors[lc].clone()
+                        } else {
+                            Vec::new()
+                        }
+                    })
                     .unwrap_or_default();
                 for &nb_id in &neighbors {
                     if let Some(nb) = self.nodes.get(&nb_id) {
@@ -564,12 +612,16 @@ impl HnswIndex {
                         }
                     }
                 }
-                if !improved { break; }
+                if !improved {
+                    break;
+                }
             }
         }
 
         // Beam search at layer 0 with Hamming
-        let entry_dist = self.nodes.get(&current)
+        let entry_dist = self
+            .nodes
+            .get(&current)
             .map(|n| hamming_distance(&n.binary, query_binary))
             .unwrap_or(u32::MAX);
 
@@ -588,12 +640,22 @@ impl HnswIndex {
                 break;
             }
 
-            let neighbors: Vec<NodeId> = self.nodes.get(&curr_id)
-                .map(|n| if n.neighbors.is_empty() { Vec::new() } else { n.neighbors[0].clone() })
+            let neighbors: Vec<NodeId> = self
+                .nodes
+                .get(&curr_id)
+                .map(|n| {
+                    if n.neighbors.is_empty() {
+                        Vec::new()
+                    } else {
+                        n.neighbors[0].clone()
+                    }
+                })
                 .unwrap_or_default();
 
             for nb_id in neighbors {
-                if visited.contains(&nb_id) { continue; }
+                if visited.contains(&nb_id) {
+                    continue;
+                }
                 visited.insert(nb_id);
 
                 if let Some(nb) = self.nodes.get(&nb_id) {
@@ -602,7 +664,9 @@ impl HnswIndex {
                     if d < farthest || result.len() < ef {
                         candidates.push(std::cmp::Reverse((d, nb_id)));
                         result.push((d, nb_id));
-                        if result.len() > ef { result.pop(); }
+                        if result.len() > ef {
+                            result.pop();
+                        }
                     }
                 }
             }
@@ -700,13 +764,16 @@ impl HnswIndex {
     /// Returns empty vec if node doesn't exist or layer is out of range.
     /// Used by `greedy_descent_hot` as fallback when node is not in hot tier.
     pub fn node_neighbors_at_layer(&self, id: &NodeId, layer: usize) -> Vec<NodeId> {
-        self.nodes.get(id).map(|n| {
-            if layer < n.neighbors.len() {
-                n.neighbors[layer].clone()
-            } else {
-                Vec::new()
-            }
-        }).unwrap_or_default()
+        self.nodes
+            .get(id)
+            .map(|n| {
+                if layer < n.neighbors.len() {
+                    n.neighbors[layer].clone()
+                } else {
+                    Vec::new()
+                }
+            })
+            .unwrap_or_default()
     }
 
     /// Beam search at layer 0 from a given entry point.
@@ -714,12 +781,7 @@ impl HnswIndex {
     /// This is the second phase of UMA-optimized search: after greedy descent
     /// through hot-tier upper layers lands on a layer-0 entry point, this
     /// method runs standard beam search to find the final top-k.
-    pub fn search_from_entry(
-        &self,
-        query: &[f32],
-        entry: NodeId,
-        ef: usize,
-    ) -> Vec<(NodeId, f32)> {
+    pub fn search_from_entry(&self, query: &[f32], entry: NodeId, ef: usize) -> Vec<(NodeId, f32)> {
         self.search_layer(query, entry, ef, 0)
     }
 }
@@ -761,7 +823,12 @@ mod tests {
         for i in 0..500u64 {
             let v = random_vector(128, i);
             vectors.push(v.clone());
-            index.insert(v, MetaData { label: format!("{}", i) });
+            index.insert(
+                v,
+                MetaData {
+                    label: format!("{}", i),
+                },
+            );
         }
         index.publish_snapshot();
 
@@ -790,7 +857,12 @@ mod tests {
         for i in 0..300u64 {
             let v = random_vector(64, i + 1000);
             vectors.push(v.clone());
-            index.insert(v, MetaData { label: format!("{}", i) });
+            index.insert(
+                v,
+                MetaData {
+                    label: format!("{}", i),
+                },
+            );
         }
         index.publish_snapshot();
 
@@ -803,7 +875,9 @@ mod tests {
             let mut total_recall = 0.0;
             for query in &queries {
                 // Brute force
-                let mut gt: Vec<(NodeId, f32)> = vectors.iter().enumerate()
+                let mut gt: Vec<(NodeId, f32)> = vectors
+                    .iter()
+                    .enumerate()
                     .map(|(i, v)| (NodeId(i as u64), l2_distance(query, v)))
                     .collect();
                 gt.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
@@ -838,7 +912,12 @@ mod tests {
     fn test_single_node() {
         let index = HnswIndex::new(64, 16, 100);
         let v = random_vector(64, 42);
-        let id = index.insert(v.clone(), MetaData { label: "only".into() });
+        let id = index.insert(
+            v.clone(),
+            MetaData {
+                label: "only".into(),
+            },
+        );
         index.publish_snapshot();
         let results = index.search(&v, Some(10));
         assert_eq!(results.len(), 1);
@@ -851,7 +930,12 @@ mod tests {
         let index = HnswIndex::new(128, 16, 100);
         for i in 0..200u64 {
             let v = random_vector(128, i);
-            index.insert(v, MetaData { label: format!("{}", i) });
+            index.insert(
+                v,
+                MetaData {
+                    label: format!("{}", i),
+                },
+            );
         }
         index.publish_snapshot();
 
@@ -866,7 +950,12 @@ mod tests {
         let index = HnswIndex::new(64, 8, 50);
         for i in 0..100u64 {
             let v = random_vector(64, i);
-            index.insert(v, MetaData { label: format!("{}", i) });
+            index.insert(
+                v,
+                MetaData {
+                    label: format!("{}", i),
+                },
+            );
         }
         index.publish_snapshot();
 

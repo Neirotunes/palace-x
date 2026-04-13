@@ -104,9 +104,9 @@ impl HotTierStore {
     /// Get vector slice for a hot-tier node (zero-copy, cache-friendly)
     #[inline]
     pub fn get_vector(&self, node_id: &NodeId) -> Option<&[f32]> {
-        self.node_offsets.get(node_id).map(|&offset| {
-            &self.vectors[offset..offset + self.dimensions]
-        })
+        self.node_offsets
+            .get(node_id)
+            .map(|&offset| &self.vectors[offset..offset + self.dimensions])
     }
 
     /// Get neighbors at a specific layer for a hot-tier node
@@ -278,7 +278,8 @@ fn greedy_descent_hot(
     let mut current_dist = if let Some(vec) = hot_tier.get_vector(&current) {
         index.compute_dist(query, vec)
     } else {
-        index.get_vector(&current)
+        index
+            .get_vector(&current)
             .map(|v| index.compute_dist(query, &v))
             .unwrap_or(f32::MAX)
     };
@@ -341,7 +342,12 @@ mod tests {
         // Insert enough nodes that some will be at upper layers
         for i in 0..500u64 {
             let v = random_vector(64, i);
-            index.insert(v, MetaData { label: format!("{}", i) });
+            index.insert(
+                v,
+                MetaData {
+                    label: format!("{}", i),
+                },
+            );
         }
         index.publish_snapshot();
 
@@ -359,7 +365,12 @@ mod tests {
 
         for i in 0..200u64 {
             let v = random_vector(64, i);
-            index.insert(v, MetaData { label: format!("{}", i) });
+            index.insert(
+                v,
+                MetaData {
+                    label: format!("{}", i),
+                },
+            );
         }
         index.publish_snapshot();
 
@@ -382,7 +393,12 @@ mod tests {
 
         for i in 0..300u64 {
             let v = random_vector(64, i);
-            index.insert(v, MetaData { label: format!("{}", i) });
+            index.insert(
+                v,
+                MetaData {
+                    label: format!("{}", i),
+                },
+            );
         }
         index.publish_snapshot();
 

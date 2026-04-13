@@ -48,25 +48,43 @@ pub fn run_sift1m_benchmark(data_dir: &Path) {
 
         let t0 = Instant::now();
         for (i, vec) in dataset.base.iter().enumerate() {
-            hnsw.insert(vec.clone(), MetaData { label: format!("{}", i) });
+            hnsw.insert(
+                vec.clone(),
+                MetaData {
+                    label: format!("{}", i),
+                },
+            );
             if (i + 1) % 100_000 == 0 {
                 let elapsed = t0.elapsed().as_secs_f64();
                 let rate = (i + 1) as f64 / elapsed;
-                println!("  Inserted {}/{}  ({:.0} vec/s)", i + 1, dataset.base.len(), rate);
+                println!(
+                    "  Inserted {}/{}  ({:.0} vec/s)",
+                    i + 1,
+                    dataset.base.len(),
+                    rate
+                );
             }
         }
         hnsw.publish_snapshot();
         let build_time = t0.elapsed();
-        println!("  HNSW built in {:.1}s ({:.0} vec/s)\n",
+        println!(
+            "  HNSW built in {:.1}s ({:.0} vec/s)\n",
             build_time.as_secs_f64(),
-            dataset.base.len() as f64 / build_time.as_secs_f64());
+            dataset.base.len() as f64 / build_time.as_secs_f64()
+        );
 
         for &ef in &[32usize, 64, 128, 256] {
             let (r1, r10, r100, qps) = bench_hnsw_search(&dataset, &hnsw, ef);
             // Effective ef is max(ef, 100) to match combined.search(q, 100) pool size
             let label = format!("HNSW float (ef={})", ef.max(100));
-            println!("  {}: R@1={:.1}% R@10={:.1}% R@100={:.1}%  {:.0} QPS",
-                label, r1 * 100.0, r10 * 100.0, r100 * 100.0, qps);
+            println!(
+                "  {}: R@1={:.1}% R@10={:.1}% R@100={:.1}%  {:.0} QPS",
+                label,
+                r1 * 100.0,
+                r10 * 100.0,
+                r100 * 100.0,
+                qps
+            );
             results.push((label, r1, r10, r100, qps, "D×4+graph".into()));
         }
     }
@@ -88,11 +106,21 @@ pub fn run_sift1m_benchmark(data_dir: &Path) {
 
         let t0 = Instant::now();
         for (i, vec) in dataset.base.iter().enumerate() {
-            combined.insert(vec.clone(), MetaData { label: format!("{}", i) });
+            combined.insert(
+                vec.clone(),
+                MetaData {
+                    label: format!("{}", i),
+                },
+            );
             if (i + 1) % 100_000 == 0 {
                 let elapsed = t0.elapsed().as_secs_f64();
                 let rate = (i + 1) as f64 / elapsed;
-                println!("  Inserted {}/{}  ({:.0} vec/s)", i + 1, dataset.base.len(), rate);
+                println!(
+                    "  Inserted {}/{}  ({:.0} vec/s)",
+                    i + 1,
+                    dataset.base.len(),
+                    rate
+                );
             }
         }
         combined.publish_snapshot();
@@ -101,17 +129,25 @@ pub fn run_sift1m_benchmark(data_dir: &Path) {
         println!("  Built in {:.1}s", build_time.as_secs_f64());
 
         let (graph_b, float_b, rq_b, total_b) = combined.memory_estimate();
-        println!("  Memory: graph={:.1}MB float={:.1}MB rabitq={:.1}MB total={:.1}MB\n",
+        println!(
+            "  Memory: graph={:.1}MB float={:.1}MB rabitq={:.1}MB total={:.1}MB\n",
             graph_b as f64 / 1_048_576.0,
             float_b as f64 / 1_048_576.0,
             rq_b as f64 / 1_048_576.0,
-            total_b as f64 / 1_048_576.0);
+            total_b as f64 / 1_048_576.0
+        );
 
         for &ef in &[32usize, 64, 128, 256] {
             let (r1, r10, r100, qps) = bench_combined_search(&dataset, &combined, ef);
             let label = format!("HNSW+RaBitQ-4bit Asym (ef={})", ef);
-            println!("  {}: R@1={:.1}% R@10={:.1}% R@100={:.1}%  {:.0} QPS",
-                label, r1 * 100.0, r10 * 100.0, r100 * 100.0, qps);
+            println!(
+                "  {}: R@1={:.1}% R@10={:.1}% R@100={:.1}%  {:.0} QPS",
+                label,
+                r1 * 100.0,
+                r10 * 100.0,
+                r100 * 100.0,
+                qps
+            );
             results.push((label, r1, r10, r100, qps, "D/2+16+graph".into()));
         }
     }
@@ -133,7 +169,12 @@ pub fn run_sift1m_benchmark(data_dir: &Path) {
 
         let t0 = Instant::now();
         for (i, vec) in dataset.base.iter().enumerate() {
-            combined_rerank.insert(vec.clone(), MetaData { label: format!("{}", i) });
+            combined_rerank.insert(
+                vec.clone(),
+                MetaData {
+                    label: format!("{}", i),
+                },
+            );
             if (i + 1) % 100_000 == 0 {
                 println!("  Inserted {}/{}", i + 1, dataset.base.len());
             }
@@ -146,8 +187,14 @@ pub fn run_sift1m_benchmark(data_dir: &Path) {
         for &ef in &[32usize, 64, 128, 256] {
             let (r1, r10, r100, qps) = bench_combined_search(&dataset, &combined_rerank, ef);
             let label = format!("HNSW+RaBitQ-4bit Beam+RR50 (ef={})", ef);
-            println!("  {}: R@1={:.1}% R@10={:.1}% R@100={:.1}%  {:.0} QPS",
-                label, r1 * 100.0, r10 * 100.0, r100 * 100.0, qps);
+            println!(
+                "  {}: R@1={:.1}% R@10={:.1}% R@100={:.1}%  {:.0} QPS",
+                label,
+                r1 * 100.0,
+                r10 * 100.0,
+                r100 * 100.0,
+                qps
+            );
             results.push((label, r1, r10, r100, qps, "D/2+16+graph".into()));
         }
     }
@@ -160,11 +207,16 @@ pub fn run_sift1m_benchmark(data_dir: &Path) {
                 println!("  GPU: {}", gpu.device_name());
                 println!("  Calibrating GPU/CPU crossover…");
                 gpu.calibrate(dataset.dim);
-                println!("  Active GPU threshold: {} candidates", gpu.active_threshold());
+                println!(
+                    "  Active GPU threshold: {} candidates",
+                    gpu.active_threshold()
+                );
 
                 // Build flat candidate matrix for varying sizes
                 for &n_cands in &[256, 1024, 4096, 16384, 65536] {
-                    if n_cands > dataset.base.len() { break; }
+                    if n_cands > dataset.base.len() {
+                        break;
+                    }
 
                     let flat_cands: Vec<f32> = dataset.base[..n_cands]
                         .iter()
@@ -180,7 +232,12 @@ pub fn run_sift1m_benchmark(data_dir: &Path) {
 
                         // GPU path
                         let t0 = Instant::now();
-                        let _gpu_dists = gpu.batch_distances(query, &flat_cands, dataset.dim, MetalDistanceMetric::L2);
+                        let _gpu_dists = gpu.batch_distances(
+                            query,
+                            &flat_cands,
+                            dataset.dim,
+                            MetalDistanceMetric::L2,
+                        );
                         total_gpu_us += t0.elapsed().as_micros() as f64;
 
                         // CPU path (scalar L2 for comparison)
@@ -199,8 +256,10 @@ pub fn run_sift1m_benchmark(data_dir: &Path) {
                     let speedup = avg_cpu / avg_gpu;
 
                     let label = format!("Metal GPU batch ({} cands)", n_cands);
-                    println!("  {}: GPU={:.0}μs  CPU={:.0}μs  speedup={:.2}x",
-                        label, avg_gpu, avg_cpu, speedup);
+                    println!(
+                        "  {}: GPU={:.0}μs  CPU={:.0}μs  speedup={:.2}x",
+                        label, avg_gpu, avg_cpu, speedup
+                    );
                     // Note: GPU batch is a latency benchmark, not recall — skip results table.
                 }
             }
@@ -215,23 +274,41 @@ pub fn run_sift1m_benchmark(data_dir: &Path) {
 
     // ─── Summary ─────────────────────────────────────────────
     println!("═══ SIFT-1M Summary ═══");
-    if let Some(best_hnsw) = results.iter()
+    if let Some(best_hnsw) = results
+        .iter()
         .filter(|r| r.0.starts_with("HNSW float"))
         .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
     {
-        println!("  Best HNSW R@1:  {:.1}% ({})  @ {:.0} QPS", best_hnsw.1 * 100.0, best_hnsw.0, best_hnsw.4);
+        println!(
+            "  Best HNSW R@1:  {:.1}% ({})  @ {:.0} QPS",
+            best_hnsw.1 * 100.0,
+            best_hnsw.0,
+            best_hnsw.4
+        );
     }
-    if let Some(best_hnsw) = results.iter()
+    if let Some(best_hnsw) = results
+        .iter()
         .filter(|r| r.0.starts_with("HNSW float"))
         .max_by(|a, b| a.2.partial_cmp(&b.2).unwrap())
     {
-        println!("  Best HNSW R@10: {:.1}% ({})  @ {:.0} QPS", best_hnsw.2 * 100.0, best_hnsw.0, best_hnsw.4);
+        println!(
+            "  Best HNSW R@10: {:.1}% ({})  @ {:.0} QPS",
+            best_hnsw.2 * 100.0,
+            best_hnsw.0,
+            best_hnsw.4
+        );
     }
-    if let Some(best_combined) = results.iter()
+    if let Some(best_combined) = results
+        .iter()
         .filter(|r| r.0.contains("RaBitQ"))
         .max_by(|a, b| a.2.partial_cmp(&b.2).unwrap())
     {
-        println!("  Best RaBitQ R@10: {:.1}% ({})  @ {:.0} QPS", best_combined.2 * 100.0, best_combined.0, best_combined.4);
+        println!(
+            "  Best RaBitQ R@10: {:.1}% ({})  @ {:.0} QPS",
+            best_combined.2 * 100.0,
+            best_combined.0,
+            best_combined.4
+        );
     }
 }
 

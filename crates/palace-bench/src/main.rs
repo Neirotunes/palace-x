@@ -22,8 +22,8 @@ use palace_topo::{betti, ego_graph::EgoGraph, metric};
 use rand::Rng;
 
 mod sift;
-mod sift_bench;
 mod sift1m_bench;
+mod sift_bench;
 
 // ─── Helpers ───────────────────────────────────────────────────────
 
@@ -215,13 +215,15 @@ fn bench_topology(dims: usize, n_vectors: usize) {
     bench("EgoGraph::build_pair (2-hop)", 10_000, || {
         let _ = EgoGraph::build_pair(id_x, id_y, |id| {
             nsw.get_neighbors(id, 1).into_iter().collect()
-        }).with_cap(500);
+        })
+        .with_cap(500);
     });
 
     // β₁ computation benchmark
     let ego = EgoGraph::build_pair(id_x, id_y, |id| {
         nsw.get_neighbors(id, 1).into_iter().collect()
-    }).with_cap(500);
+    })
+    .with_cap(500);
 
     bench("beta_1(ego_graph)", 100_000, || {
         let _ = betti::beta_1(&ego);
@@ -267,7 +269,7 @@ fn bench_bitplane(dims: usize) {
 
 fn bench_sift(limit: Option<usize>) {
     println!("\n═══ SIFT-128 Benchmark (Recall & QPS) ═══");
-    
+
     // 1. Load data
     let base_path = "data/siftsmall/siftsmall_base.fvecs";
     let query_path = "data/siftsmall/siftsmall_query.fvecs";
@@ -276,7 +278,9 @@ fn bench_sift(limit: Option<usize>) {
     // Check if files exist
     if !std::path::Path::new(base_path).exists() {
         println!("  [!] SIFT data not found at data/siftsmall/. Skipping benchmark.");
-        println!("      Hint: Download from ftp://ftp.irisa.fr/local/texmex/corpus/siftsmall.tar.gz");
+        println!(
+            "      Hint: Download from ftp://ftp.irisa.fr/local/texmex/corpus/siftsmall.tar.gz"
+        );
         return;
     }
 
@@ -288,7 +292,11 @@ fn bench_sift(limit: Option<usize>) {
     let n_base = limit.unwrap_or(base_vectors.len());
     let base_vectors = &base_vectors[..n_base];
 
-    println!("  Data: {} base vectors, {} queries", n_base, query_vectors.len());
+    println!(
+        "  Data: {} base vectors, {} queries",
+        n_base,
+        query_vectors.len()
+    );
 
     // 2. Setup Index — use L2 metric to match SIFT ground truth
     let nsw_l2 = NswIndex::with_l2(dims, 32, 200);
@@ -302,8 +310,18 @@ fn bench_sift(limit: Option<usize>) {
 
     println!("  Building indices...");
     for (i, v) in base_vectors.iter().enumerate() {
-        nsw_l2.insert(v.clone(), GraphMetaData { label: format!("{}", i) });
-        nsw_l2_alpha.insert(v.clone(), GraphMetaData { label: format!("{}", i) });
+        nsw_l2.insert(
+            v.clone(),
+            GraphMetaData {
+                label: format!("{}", i),
+            },
+        );
+        nsw_l2_alpha.insert(
+            v.clone(),
+            GraphMetaData {
+                label: format!("{}", i),
+            },
+        );
         codes_1bit.push(rq_index.encode_multibit(v, 1));
         codes_4bit.push(rq_index.encode_multibit(v, 4));
     }
@@ -322,22 +340,32 @@ fn bench_sift(limit: Option<usize>) {
             let gt = &ground_truth[i];
 
             if i == 0 {
-                println!("      Debug ({}): Top-5 Results: {:?}, GT: {:?}", name, &results[..5.min(results.len())], &gt[..5]);
+                println!(
+                    "      Debug ({}): Top-5 Results: {:?}, GT: {:?}",
+                    name,
+                    &results[..5.min(results.len())],
+                    &gt[..5]
+                );
             }
 
             if !results.is_empty() && results[0] == gt[0] as usize {
                 recall_1 += 1.0;
             }
 
-            let hits = results.iter().take(10).filter(|&&id| gt[..10].contains(&(id as u32))).count();
+            let hits = results
+                .iter()
+                .take(10)
+                .filter(|&&id| gt[..10].contains(&(id as u32)))
+                .count();
             recall_10 += hits as f32 / 10.0;
         }
 
         let elapsed = start.elapsed();
         let qps = query_vectors.len() as f64 / elapsed.as_secs_f64();
-        
-        println!("| {} | {:.1}% | {:.1}% | {:.0} | {} |", 
-            name, 
+
+        println!(
+            "| {} | {:.1}% | {:.1}% | {:.0} | {} |",
+            name,
             (recall_1 / query_vectors.len() as f32) * 100.0,
             (recall_10 / query_vectors.len() as f32) * 100.0,
             qps,
@@ -346,94 +374,146 @@ fn bench_sift(limit: Option<usize>) {
     };
 
     // Baseline: Brute Force L2
-    run_bench("Float L2 (BF)", &|q: &[f32]| {
-        let mut dists: Vec<(usize, f32)> = base_vectors.iter().enumerate()
-            .map(|(i, v)| {
-                let d: f32 = v.iter().zip(q.iter()).map(|(a, b)| (a - b) * (a - b)).sum();
-                (i, d)
-            }).collect();
-        dists.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-        dists.iter().take(10).map(|(id, _)| *id).collect()
-    }, "D×4 B");
+    run_bench(
+        "Float L2 (BF)",
+        &|q: &[f32]| {
+            let mut dists: Vec<(usize, f32)> = base_vectors
+                .iter()
+                .enumerate()
+                .map(|(i, v)| {
+                    let d: f32 = v.iter().zip(q.iter()).map(|(a, b)| (a - b) * (a - b)).sum();
+                    (i, d)
+                })
+                .collect();
+            dists.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+            dists.iter().take(10).map(|(id, _)| *id).collect()
+        },
+        "D×4 B",
+    );
 
     // Baseline: RaBitQ Brute Force (Asymmetric)
-    run_bench("RaBitQ 1-bit (BF)", &|q| {
-        let rq = rq_index.encode_query(q);
-        let res = palace_quant::rabitq::rabitq_topk(&rq_index, &rq, &codes_1bit, 10);
-        res.into_iter().map(|(id, _)| id).collect()
-    }, "D/8 + 16B");
+    run_bench(
+        "RaBitQ 1-bit (BF)",
+        &|q| {
+            let rq = rq_index.encode_query(q);
+            let res = palace_quant::rabitq::rabitq_topk(&rq_index, &rq, &codes_1bit, 10);
+            res.into_iter().map(|(id, _)| id).collect()
+        },
+        "D/8 + 16B",
+    );
 
-    run_bench("RaBitQ 4-bit (BF)", &|q| {
-        let rq = rq_index.encode_query(q);
-        let res = palace_quant::rabitq::rabitq_topk(&rq_index, &rq, &codes_4bit, 10);
-        res.into_iter().map(|(id, _)| id).collect()
-    }, "D/2 + 16B");
+    run_bench(
+        "RaBitQ 4-bit (BF)",
+        &|q| {
+            let rq = rq_index.encode_query(q);
+            let res = palace_quant::rabitq::rabitq_topk(&rq_index, &rq, &codes_4bit, 10);
+            res.into_iter().map(|(id, _)| id).collect()
+        },
+        "D/2 + 16B",
+    );
 
     // NSW Search (L2 distance — matches SIFT ground truth)
-    run_bench("NSW L2 (ef=64)", &|q| {
-        let res = nsw_l2.search(q, Some(64));
-        res.into_iter().map(|(id, _)| id.0 as usize).collect()
-    }, "D×4+graph");
+    run_bench(
+        "NSW L2 (ef=64)",
+        &|q| {
+            let res = nsw_l2.search(q, Some(64));
+            res.into_iter().map(|(id, _)| id.0 as usize).collect()
+        },
+        "D×4+graph",
+    );
 
-    run_bench("NSW L2 (ef=128)", &|q| {
-        let res = nsw_l2_alpha.search(q, Some(128));
-        res.into_iter().map(|(id, _)| id.0 as usize).collect()
-    }, "D×4+graph");
+    run_bench(
+        "NSW L2 (ef=128)",
+        &|q| {
+            let res = nsw_l2_alpha.search(q, Some(128));
+            res.into_iter().map(|(id, _)| id.0 as usize).collect()
+        },
+        "D×4+graph",
+    );
 
     // === HNSW ===
     println!("\n  Building HNSW index (M=16, ef_c=200)...");
     let hnsw = HnswIndex::new(dims, 16, 200);
     for (i, v) in base_vectors.iter().enumerate() {
-        hnsw.insert(v.clone(), GraphMetaData { label: format!("{}", i) });
+        hnsw.insert(
+            v.clone(),
+            GraphMetaData {
+                label: format!("{}", i),
+            },
+        );
     }
     println!("  HNSW built. Running searches...\n");
 
-    run_bench("HNSW L2 (ef=32)", &|q| {
-        let res = hnsw.search(q, Some(32));
-        res.into_iter().map(|(id, _)| id.0 as usize).collect()
-    }, "D×4+graph");
+    run_bench(
+        "HNSW L2 (ef=32)",
+        &|q| {
+            let res = hnsw.search(q, Some(32));
+            res.into_iter().map(|(id, _)| id.0 as usize).collect()
+        },
+        "D×4+graph",
+    );
 
-    run_bench("HNSW L2 (ef=64)", &|q| {
-        let res = hnsw.search(q, Some(64));
-        res.into_iter().map(|(id, _)| id.0 as usize).collect()
-    }, "D×4+graph");
+    run_bench(
+        "HNSW L2 (ef=64)",
+        &|q| {
+            let res = hnsw.search(q, Some(64));
+            res.into_iter().map(|(id, _)| id.0 as usize).collect()
+        },
+        "D×4+graph",
+    );
 
-    run_bench("HNSW L2 (ef=128)", &|q| {
-        let res = hnsw.search(q, Some(128));
-        res.into_iter().map(|(id, _)| id.0 as usize).collect()
-    }, "D×4+graph");
+    run_bench(
+        "HNSW L2 (ef=128)",
+        &|q| {
+            let res = hnsw.search(q, Some(128));
+            res.into_iter().map(|(id, _)| id.0 as usize).collect()
+        },
+        "D×4+graph",
+    );
 
-    run_bench("HNSW L2 (ef=256)", &|q| {
-        let res = hnsw.search(q, Some(256));
-        res.into_iter().map(|(id, _)| id.0 as usize).collect()
-    }, "D×4+graph");
+    run_bench(
+        "HNSW L2 (ef=256)",
+        &|q| {
+            let res = hnsw.search(q, Some(256));
+            res.into_iter().map(|(id, _)| id.0 as usize).collect()
+        },
+        "D×4+graph",
+    );
 
     // === RaBitQ 1-bit vs 4-bit ===
     println!("\n  Building RaBitQ indices (1-bit and 4-bit)...");
     let rabitq = palace_quant::rabitq::RaBitQIndex::new(dims, 42);
 
-    let codes_1bit: Vec<palace_quant::rabitq::RaBitQCode> = base_vectors.iter()
-        .map(|v| rabitq.encode(v))
-        .collect();
-    let codes_4bit: Vec<palace_quant::rabitq::RaBitQCode> = base_vectors.iter()
+    let codes_1bit: Vec<palace_quant::rabitq::RaBitQCode> =
+        base_vectors.iter().map(|v| rabitq.encode(v)).collect();
+    let codes_4bit: Vec<palace_quant::rabitq::RaBitQCode> = base_vectors
+        .iter()
         .map(|v| rabitq.encode_multibit(v, 4))
         .collect();
 
     println!("  RaBitQ encoded. Measuring recall...\n");
 
     // Measure recall for RaBitQ 1-bit
-    run_bench("RaBitQ 1-bit (topk=10)", &|q| {
-        let rq = rabitq.encode_query(q);
-        let results = palace_quant::rabitq::rabitq_topk(&rabitq, &rq, &codes_1bit, 10);
-        results.into_iter().map(|(idx, _)| idx).collect()
-    }, "D/64 + factors");
+    run_bench(
+        "RaBitQ 1-bit (topk=10)",
+        &|q| {
+            let rq = rabitq.encode_query(q);
+            let results = palace_quant::rabitq::rabitq_topk(&rabitq, &rq, &codes_1bit, 10);
+            results.into_iter().map(|(idx, _)| idx).collect()
+        },
+        "D/64 + factors",
+    );
 
     // Measure recall for RaBitQ 4-bit
-    run_bench("RaBitQ 4-bit (topk=10)", &|q| {
-        let rq = rabitq.encode_query(q);
-        let results = palace_quant::rabitq::rabitq_topk(&rabitq, &rq, &codes_4bit, 10);
-        results.into_iter().map(|(idx, _)| idx).collect()
-    }, "D/16 + factors");
+    run_bench(
+        "RaBitQ 4-bit (topk=10)",
+        &|q| {
+            let rq = rabitq.encode_query(q);
+            let results = palace_quant::rabitq::rabitq_topk(&rabitq, &rq, &codes_4bit, 10);
+            results.into_iter().map(|(idx, _)| idx).collect()
+        },
+        "D/16 + factors",
+    );
 }
 
 fn bench_full_pipeline(dims: usize, n_vectors: usize) {
@@ -536,7 +616,7 @@ fn bench_full_pipeline(dims: usize, n_vectors: usize) {
 // ─── Metal GPU Batch Distance Benchmark ───────────────────────────
 
 fn bench_metal_batch(dims: usize) {
-    use palace_optimizer::metal_batch::{MetalBatchSearch, MetalDistanceMetric, gpu_rerank};
+    use palace_optimizer::metal_batch::{gpu_rerank, MetalBatchSearch, MetalDistanceMetric};
 
     println!("\n═══ Metal GPU Batch Distance (L2 + Cosine) ═══");
 
@@ -559,7 +639,9 @@ fn bench_metal_batch(dims: usize) {
     println!("  ├──────────────────┼──────────┼───────────┼───────────┤");
 
     for &n in &[256, 1_000, 4_000, 16_000, 64_000] {
-        let candidates: Vec<f32> = (0..n * dims).map(|_| rng.gen::<f32>() * 2.0 - 1.0).collect();
+        let candidates: Vec<f32> = (0..n * dims)
+            .map(|_| rng.gen::<f32>() * 2.0 - 1.0)
+            .collect();
 
         // GPU path
         let iterations = if n <= 1000 { 100 } else { 20 };
@@ -587,7 +669,9 @@ fn bench_metal_batch(dims: usize) {
 
     // Cosine metric quick check
     let n = 4_000;
-    let candidates: Vec<f32> = (0..n * dims).map(|_| rng.gen::<f32>() * 2.0 - 1.0).collect();
+    let candidates: Vec<f32> = (0..n * dims)
+        .map(|_| rng.gen::<f32>() * 2.0 - 1.0)
+        .collect();
     let start = Instant::now();
     for _ in 0..50 {
         let _ = gpu.batch_distances(&query, &candidates, dims, MetalDistanceMetric::Cosine);
@@ -596,13 +680,16 @@ fn bench_metal_batch(dims: usize) {
     println!("  Cosine 4K×{}d: {:.0} μs/batch", dims, cosine_us);
 
     let (dispatches, processed) = gpu.stats();
-    println!("  Total dispatches: {}, vectors processed: {}", dispatches, processed);
+    println!(
+        "  Total dispatches: {}, vectors processed: {}",
+        dispatches, processed
+    );
 }
 
 // ─── UMA Cache-Aware HNSW Benchmark ───────────────────────────────
 
 fn bench_uma_hnsw(dims: usize, n: usize) {
-    use palace_graph::uma_hnsw::{HotTierStore, HnswPrefetcher, search_with_prefetch};
+    use palace_graph::uma_hnsw::{search_with_prefetch, HnswPrefetcher, HotTierStore};
 
     println!("\n═══ UMA Cache-Aware HNSW (hot/cold tier + prefetch) ═══");
 
@@ -613,11 +700,19 @@ fn bench_uma_hnsw(dims: usize, n: usize) {
     let vectors: Vec<Vec<f32>> = (0..n).map(|_| random_vector(&mut rng, dims)).collect();
     let start = Instant::now();
     for (i, v) in vectors.iter().enumerate() {
-        index.insert(v.clone(), GraphMetaData { label: format!("{}", i) });
+        index.insert(
+            v.clone(),
+            GraphMetaData {
+                label: format!("{}", i),
+            },
+        );
     }
     index.publish_snapshot();
     let build_elapsed = start.elapsed();
-    println!("  Built HNSW index: {} vectors × {}d in {:?}", n, dims, build_elapsed);
+    println!(
+        "  Built HNSW index: {} vectors × {}d in {:?}",
+        n, dims, build_elapsed
+    );
 
     // Build hot tier
     let start = Instant::now();
@@ -633,7 +728,9 @@ fn bench_uma_hnsw(dims: usize, n: usize) {
     let prefetcher = HnswPrefetcher::new();
     let ef = 32;
     let num_queries = 1000;
-    let queries: Vec<Vec<f32>> = (0..num_queries).map(|_| random_vector(&mut rng, dims)).collect();
+    let queries: Vec<Vec<f32>> = (0..num_queries)
+        .map(|_| random_vector(&mut rng, dims))
+        .collect();
 
     // Benchmark: standard HNSW search
     let start = Instant::now();
@@ -692,9 +789,7 @@ fn bench_uma_hnsw(dims: usize, n: usize) {
     }
     println!(
         "  Recall parity: top-1 match {:.1}%, top-{} overlap {:.1}%",
-        top1_match as f64,
-        k,
-        topk_overlap
+        top1_match as f64, k, topk_overlap
     );
 }
 
@@ -725,13 +820,9 @@ fn bench_rabitq_neon(dims: usize, n_codes: usize) {
     let query = index.encode_query(&query_vec);
 
     // ── Single distance estimation throughput ──
-    bench(
-        "rabitq_4bit estimate_distance (single)",
-        1_000_000,
-        || {
-            let _ = index.estimate_distance(&query, &codes[0]);
-        },
-    );
+    bench("rabitq_4bit estimate_distance (single)", 1_000_000, || {
+        let _ = index.estimate_distance(&query, &codes[0]);
+    });
 
     // ── Batch top-k throughput (the real bottleneck) ──
     bench(
@@ -756,19 +847,13 @@ fn bench_rabitq_neon(dims: usize, n_codes: usize) {
     );
 
     // ── 1-bit comparison (same index, different encoding) ──
-    let codes_1bit: Vec<palace_quant::rabitq::RaBitQCode> = vectors
-        .iter()
-        .map(|v| index.encode(v))
-        .collect();
+    let codes_1bit: Vec<palace_quant::rabitq::RaBitQCode> =
+        vectors.iter().map(|v| index.encode(v)).collect();
     let query_1bit = index.encode_query(&query_vec);
 
-    bench(
-        "rabitq_1bit estimate_distance (single)",
-        1_000_000,
-        || {
-            let _ = index.estimate_distance(&query_1bit, &codes_1bit[0]);
-        },
-    );
+    bench("rabitq_1bit estimate_distance (single)", 1_000_000, || {
+        let _ = index.estimate_distance(&query_1bit, &codes_1bit[0]);
+    });
 
     let start = Instant::now();
     for _ in 0..iters {
@@ -819,9 +904,7 @@ fn bench_hnsw_rabitq(dims: usize, n: usize) {
     let pure_hnsw = HnswIndex::new(dims, 16, 200);
 
     // Insert same vectors into all
-    let vectors: Vec<Vec<f32>> = (0..n)
-        .map(|_| random_vector(&mut rng, dims))
-        .collect();
+    let vectors: Vec<Vec<f32>> = (0..n).map(|_| random_vector(&mut rng, dims)).collect();
 
     let insert_start = Instant::now();
     for v in &vectors {
@@ -835,7 +918,10 @@ fn bench_hnsw_rabitq(dims: usize, n: usize) {
     combined_rerank.publish_snapshot();
     pure_hnsw.publish_snapshot();
 
-    println!("  Build time: {:?} ({} vectors × 3 indices)", insert_elapsed, n);
+    println!(
+        "  Build time: {:?} ({} vectors × 3 indices)",
+        insert_elapsed, n
+    );
 
     let (graph_b, float_b, rq_b, total_b) = combined.memory_estimate();
     println!(
@@ -900,7 +986,9 @@ fn bench_hnsw_rabitq(dims: usize, n: usize) {
     hnsw_recall /= n_queries as f64;
     println!(
         "  │ {:<28} │ {:>6.1}%  │ {:>8.0} │   1.0x   │",
-        "HNSW Float ef=64", hnsw_recall * 100.0, hnsw_qps
+        "HNSW Float ef=64",
+        hnsw_recall * 100.0,
+        hnsw_qps
     );
 
     // Combined configs
@@ -925,7 +1013,10 @@ fn bench_hnsw_rabitq(dims: usize, n: usize) {
         let speedup = qps / hnsw_qps;
         println!(
             "  │ {:<28} │ {:>6.1}%  │ {:>8.0} │  {:>5.2}x  │",
-            name, recall * 100.0, qps, speedup
+            name,
+            recall * 100.0,
+            qps,
+            speedup
         );
     }
 

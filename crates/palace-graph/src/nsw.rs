@@ -70,8 +70,8 @@ pub struct NswIndex {
     hub_cache: RwLock<Vec<NodeId>>, // top-K hub nodes
     next_id: AtomicU64,
     dimensions: usize,
-    alpha: f32,                     // Pruning parameter for neighbor selection
-    metric: DistanceMetric,          // Distance metric for graph construction & search
+    alpha: f32,             // Pruning parameter for neighbor selection
+    metric: DistanceMetric, // Distance metric for graph construction & search
 }
 
 impl NswIndex {
@@ -264,7 +264,10 @@ impl NswIndex {
             }
             if let Some(entry_node) = nodes.get(&entry_id) {
                 let dist = self.dist(query_vec, &entry_node.vector);
-                candidates.push(std::cmp::Reverse(Candidate { id: entry_id, distance: dist }));
+                candidates.push(std::cmp::Reverse(Candidate {
+                    id: entry_id,
+                    distance: dist,
+                }));
                 result_set.push((entry_id, dist));
             }
         }
@@ -303,7 +306,9 @@ impl NswIndex {
                             result_set.push((*neighbor_id, dist));
 
                             if result_set.len() > ef {
-                                result_set.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
+                                result_set.sort_by(|a, b| {
+                                    a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal)
+                                });
                                 result_set.truncate(ef);
                             }
                         }
@@ -368,7 +373,10 @@ impl NswIndex {
             }
             if let Some(node) = self.nodes.get(&eid) {
                 let dist = self.dist(query, &node.vector);
-                candidates.push(std::cmp::Reverse(Candidate { id: eid, distance: dist }));
+                candidates.push(std::cmp::Reverse(Candidate {
+                    id: eid,
+                    distance: dist,
+                }));
                 result_set.push((eid, dist));
             }
         }
@@ -407,11 +415,15 @@ impl NswIndex {
                     };
 
                     if dist < farthest || result_set.len() < ef {
-                        candidates.push(std::cmp::Reverse(Candidate { id: nid, distance: dist }));
+                        candidates.push(std::cmp::Reverse(Candidate {
+                            id: nid,
+                            distance: dist,
+                        }));
                         result_set.push((nid, dist));
 
                         if result_set.len() > ef {
-                            result_set.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
+                            result_set
+                                .sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
                             result_set.truncate(ef);
                         }
                     }

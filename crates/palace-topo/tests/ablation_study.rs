@@ -70,7 +70,11 @@ fn build_graph(base: &[Vec<f32>]) -> HashMap<NodeId, Vec<NodeId>> {
             .map(|j| (j, cosine_distance(&base[i], &base[j])))
             .collect();
         dists.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-        let neighbors: Vec<NodeId> = dists.iter().take(M).map(|(j, _)| NodeId(*j as u64)).collect();
+        let neighbors: Vec<NodeId> = dists
+            .iter()
+            .take(M)
+            .map(|(j, _)| NodeId(*j as u64))
+            .collect();
         graph.insert(NodeId(i as u64), neighbors);
     }
 
@@ -79,7 +83,11 @@ fn build_graph(base: &[Vec<f32>]) -> HashMap<NodeId, Vec<NodeId>> {
 
 fn recall_at_k(retrieved: &[usize], gt: &[usize], k: usize) -> f32 {
     let gt_set: HashSet<usize> = gt.iter().take(k).copied().collect();
-    let hits = retrieved.iter().take(k).filter(|id| gt_set.contains(id)).count();
+    let hits = retrieved
+        .iter()
+        .take(k)
+        .filter(|id| gt_set.contains(id))
+        .count();
     hits as f32 / k.min(gt.len()) as f32
 }
 
@@ -126,7 +134,8 @@ fn search_with_rerank(
             // Build ego-graph around candidate
             let ego = EgoGraph::build_single(node_id, 1, |id| {
                 graph.get(&id).cloned().unwrap_or_default()
-            }).with_cap(500);
+            })
+            .with_cap(500);
 
             let d = d_total(cos_dist, &ego, alpha, beta);
             (idx, d)
@@ -143,7 +152,10 @@ fn ablation_alpha_beta() {
     let (base, queries) = generate_data(&mut rng);
 
     eprintln!("\n═══ ABLATION STUDY: α/β Parameter Sweep ═══");
-    eprintln!("Dataset: {} vectors × {}d, {} queries, k={}", N_VECTORS, DIM, N_QUERIES, K);
+    eprintln!(
+        "Dataset: {} vectors × {}d, {} queries, k={}",
+        N_VECTORS, DIM, N_QUERIES, K
+    );
     eprintln!("Building kNN graph (M={})...", M);
 
     let graph = build_graph(&base);
@@ -162,7 +174,10 @@ fn ablation_alpha_beta() {
 
     let candidate_k = 50; // rerank top-50 candidates
 
-    eprintln!("| Configuration | Recall@{} | MRR@{} | Latency/query |", K, K);
+    eprintln!(
+        "| Configuration | Recall@{} | MRR@{} | Latency/query |",
+        K, K
+    );
     eprintln!("|---------------|-----------|--------|---------------|");
 
     let mut best_recall = 0.0f32;
@@ -199,9 +214,17 @@ fn ablation_alpha_beta() {
         }
     }
 
-    eprintln!("\nBest configuration: {} (recall@{} = {:.1}%)", best_config, K, best_recall * 100.0);
+    eprintln!(
+        "\nBest configuration: {} (recall@{} = {:.1}%)",
+        best_config,
+        K,
+        best_recall * 100.0
+    );
 
     // The pure cosine baseline should have good recall since we're doing brute-force
     // The test passes if it runs without panic — actual results are informational
-    assert!(best_recall > 0.0, "At least one config should have non-zero recall");
+    assert!(
+        best_recall > 0.0,
+        "At least one config should have non-zero recall"
+    );
 }

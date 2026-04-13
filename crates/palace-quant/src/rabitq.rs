@@ -164,7 +164,9 @@ impl RaBitQIndex {
 
     /// Update the centroid of the index using a representative sample of vectors.
     pub fn update_centroid(&mut self, samples: &[Vec<f32>]) {
-        if samples.is_empty() { return; }
+        if samples.is_empty() {
+            return;
+        }
         let mut new_centroid = vec![0.0; self.dim];
         for s in samples {
             for (i, v) in s.iter().enumerate() {
@@ -189,7 +191,11 @@ impl RaBitQIndex {
 
     /// Update centroid (e.g., after computing mean of dataset).
     pub fn set_centroid(&mut self, centroid: Vec<f32>) {
-        assert_eq!(centroid.len(), self.dim, "RaBitQ: centroid dimension mismatch");
+        assert_eq!(
+            centroid.len(),
+            self.dim,
+            "RaBitQ: centroid dimension mismatch"
+        );
         self.centroid = centroid;
     }
 
@@ -210,7 +216,11 @@ impl RaBitQIndex {
     /// * `bits` - Number of bits per dimension (1 or 4 supported)
     pub fn encode_multibit(&self, vector: &[f32], bits: u8) -> RaBitQCode {
         assert_eq!(vector.len(), self.dim, "RaBitQ: vector dimension mismatch");
-        assert!(bits == 1 || bits == 4 || bits == 7, "RaBitQ: unsupported bit-depth {}, expected 1, 4, or 7", bits);
+        assert!(
+            bits == 1 || bits == 4 || bits == 7,
+            "RaBitQ: unsupported bit-depth {}, expected 1, 4, or 7",
+            bits
+        );
 
         // Step 1: Residual from centroid
         let residual: Vec<f32> = vector
@@ -304,8 +314,7 @@ impl RaBitQIndex {
         // Error bound: ε ≈ 2·ε₀·||o-c||·√(1/x0² - 1) / √(D-1)
         let epsilon_0 = 1.9;
         let inv_x0_sq_minus_1 = (1.0 / (x0 * x0) - 1.0).max(0.0);
-        let error_bound = 2.0 * epsilon_0 * norm
-            * inv_x0_sq_minus_1.sqrt()
+        let error_bound = 2.0 * epsilon_0 * norm * inv_x0_sq_minus_1.sqrt()
             / ((self.dim - 1).max(1) as f32).sqrt();
 
         RaBitQCode {
@@ -379,8 +388,7 @@ impl RaBitQIndex {
         //   ⟨o-c, q-c⟩ = ||o-c|| · ⟨x_hat, q-c⟩
         //               = ||o-c|| · ⟨x', q'⟩              (rotation preserves IP)
         //   ⟨x', q'⟩ ≈ (1 / (x0·√D)) · x_dot_q
-        let est_inner_product =
-            code.factors.norm / (code.factors.x0 * d.sqrt()) * x_dot_q;
+        let est_inner_product = code.factors.norm / (code.factors.x0 * d.sqrt()) * x_dot_q;
 
         let est_dist = code.factors.sqr_norm + query.sqr_y - 2.0 * est_inner_product;
         let lower_bound = est_dist - code.factors.error_bound * query.q_norm;
@@ -398,9 +406,7 @@ impl RaBitQIndex {
         #[cfg(target_arch = "aarch64")]
         {
             // NEON path: 2·masked_sum − sum_q (branchless)
-            let masked_sum = unsafe {
-                neon_masked_sum(sign_bits, q_rotated.as_ptr(), self.dim)
-            };
+            let masked_sum = unsafe { neon_masked_sum(sign_bits, q_rotated.as_ptr(), self.dim) };
             let sum_q = unsafe { neon_sum_f32(q_rotated, self.dim) };
             return 2.0 * masked_sum - sum_q;
         }
@@ -454,9 +460,7 @@ impl RaBitQIndex {
             for k in 0..bits {
                 let plane_offset = k * words_per_plane;
                 let plane = &code.binary[plane_offset..plane_offset + words_per_plane];
-                let plane_ip = unsafe {
-                    neon_masked_sum(plane, q_rotated.as_ptr(), self.dim)
-                };
+                let plane_ip = unsafe { neon_masked_sum(plane, q_rotated.as_ptr(), self.dim) };
                 weighted += (1u32 << k) as f32 * plane_ip;
             }
             weighted
@@ -615,7 +619,6 @@ unsafe fn neon_sum_f32(data: &[f32], dim: usize) -> f32 {
 
     result
 }
-
 
 /// Prepared query for RaBitQ distance estimation.
 #[derive(Clone, Debug)]
@@ -922,7 +925,11 @@ mod tests {
         let words_per_plane = (dim + 63) / 64;
         assert_eq!(code.binary.len(), 4 * words_per_plane);
         assert_eq!(code.bits, 4);
-        assert!(code.factors.x0 > 0.0, "x0 should be positive, got {}", code.factors.x0);
+        assert!(
+            code.factors.x0 > 0.0,
+            "x0 should be positive, got {}",
+            code.factors.x0
+        );
         assert!(code.factors.norm.is_finite());
     }
 
@@ -936,7 +943,11 @@ mod tests {
         let query = index.encode_query(&vector);
 
         let (dist, _lb) = index.estimate_distance(&query, &code);
-        assert!(dist < 1.0, "4-bit self-distance should be near 0, got {}", dist);
+        assert!(
+            dist < 1.0,
+            "4-bit self-distance should be near 0, got {}",
+            dist
+        );
     }
 
     #[test]
@@ -958,7 +969,8 @@ mod tests {
         assert!(
             dist_near < dist_far,
             "4-bit: near vector ({}) should be closer than far vector ({})",
-            dist_near, dist_far
+            dist_near,
+            dist_far
         );
     }
 
@@ -1008,7 +1020,8 @@ mod tests {
         let index = RaBitQIndex::new(dim, 42);
 
         let codes_1bit: Vec<RaBitQCode> = vectors.iter().map(|v| index.encode(v)).collect();
-        let codes_4bit: Vec<RaBitQCode> = vectors.iter()
+        let codes_4bit: Vec<RaBitQCode> = vectors
+            .iter()
             .map(|v| index.encode_multibit(v, 4))
             .collect();
 
@@ -1020,10 +1033,15 @@ mod tests {
             let query: Vec<f32> = (0..dim).map(|_| rng.gen::<f32>() * 2.0 - 1.0).collect();
 
             // Ground truth
-            let mut true_dists: Vec<(usize, f32)> = vectors.iter().enumerate()
+            let mut true_dists: Vec<(usize, f32)> = vectors
+                .iter()
+                .enumerate()
                 .map(|(i, v)| {
-                    let d: f32 = v.iter().zip(query.iter())
-                        .map(|(a, b)| (a - b) * (a - b)).sum();
+                    let d: f32 = v
+                        .iter()
+                        .zip(query.iter())
+                        .map(|(a, b)| (a - b) * (a - b))
+                        .sum();
                     (i, d)
                 })
                 .collect();
@@ -1034,14 +1052,18 @@ mod tests {
 
             // 1-bit recall
             let results_1bit = rabitq_topk(&index, &rq, &codes_1bit, k);
-            let hits_1bit = results_1bit.iter()
-                .filter(|(idx, _)| true_topk.contains(idx)).count();
+            let hits_1bit = results_1bit
+                .iter()
+                .filter(|(idx, _)| true_topk.contains(idx))
+                .count();
             recall_1bit_sum += hits_1bit as f32 / k as f32;
 
             // 4-bit recall
             let results_4bit = rabitq_topk(&index, &rq, &codes_4bit, k);
-            let hits_4bit = results_4bit.iter()
-                .filter(|(idx, _)| true_topk.contains(idx)).count();
+            let hits_4bit = results_4bit
+                .iter()
+                .filter(|(idx, _)| true_topk.contains(idx))
+                .count();
             recall_4bit_sum += hits_4bit as f32 / k as f32;
         }
 
@@ -1060,7 +1082,8 @@ mod tests {
         assert!(
             recall_4bit >= recall_1bit - 0.05,
             "4-bit recall ({:.3}) should be >= 1-bit recall ({:.3})",
-            recall_4bit, recall_1bit
+            recall_4bit,
+            recall_1bit
         );
     }
 
@@ -1093,8 +1116,14 @@ mod tests {
             avg_x0_1bit, avg_x0_4bit
         );
 
-        assert!(avg_x0_1bit > 0.0 && avg_x0_1bit.is_finite(), "1-bit x0 should be positive finite");
-        assert!(avg_x0_4bit > 0.0 && avg_x0_4bit.is_finite(), "4-bit x0 should be positive finite");
+        assert!(
+            avg_x0_1bit > 0.0 && avg_x0_1bit.is_finite(),
+            "1-bit x0 should be positive finite"
+        );
+        assert!(
+            avg_x0_4bit > 0.0 && avg_x0_4bit.is_finite(),
+            "4-bit x0 should be positive finite"
+        );
     }
 
     /// Verify that 1-bit IP satisfies the algebraic identity:
@@ -1115,7 +1144,11 @@ mod tests {
             let mut scalar_result: f32 = 0.0;
             for i in 0..dim {
                 let bit = (code.binary[i / 64] >> (i % 64)) & 1;
-                if bit == 1 { scalar_result += q[i]; } else { scalar_result -= q[i]; }
+                if bit == 1 {
+                    scalar_result += q[i];
+                } else {
+                    scalar_result -= q[i];
+                }
             }
 
             // Algebraic: 2·masked_sum − sum_q
@@ -1131,17 +1164,17 @@ mod tests {
             assert!(
                 (scalar_result - algebraic).abs() < 1e-4,
                 "Algebraic identity mismatch: scalar={}, algebraic={}",
-                scalar_result, algebraic
+                scalar_result,
+                algebraic
             );
 
             // Via index method (dispatches to NEON on aarch64)
-            let method_result = index.compute_1bit_ip(
-                &code.binary[..words_per_plane], &q
-            );
+            let method_result = index.compute_1bit_ip(&code.binary[..words_per_plane], &q);
             assert!(
                 (scalar_result - method_result).abs() < 1e-3,
                 "Method vs scalar mismatch: method={}, scalar={}",
-                method_result, scalar_result
+                method_result,
+                scalar_result
             );
         }
     }
@@ -1162,12 +1195,17 @@ mod tests {
             let (est_dist, lower_bound) = index.estimate_distance(&query, &code_4bit);
 
             // Distance should be non-negative
-            assert!(est_dist >= 0.0, "Estimated distance should be >= 0, got {}", est_dist);
+            assert!(
+                est_dist >= 0.0,
+                "Estimated distance should be >= 0, got {}",
+                est_dist
+            );
             // Lower bound should be <= estimated distance
             assert!(
                 lower_bound <= est_dist + 1e-3,
                 "Lower bound ({}) should be <= estimated distance ({})",
-                lower_bound, est_dist
+                lower_bound,
+                est_dist
             );
         }
     }

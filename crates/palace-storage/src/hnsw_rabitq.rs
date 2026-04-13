@@ -125,16 +125,16 @@ impl HnswRaBitQ {
     /// Create a new combined index.
     pub fn new(config: HnswRaBitQConfig) -> Self {
         let hnsw = match config.metric {
-            HnswDistanceMetric::L2 => {
-                HnswIndex::new(config.dimensions, config.max_neighbors, config.ef_construction)
-            }
-            HnswDistanceMetric::Cosine => {
-                HnswIndex::with_cosine(
-                    config.dimensions,
-                    config.max_neighbors,
-                    config.ef_construction,
-                )
-            }
+            HnswDistanceMetric::L2 => HnswIndex::new(
+                config.dimensions,
+                config.max_neighbors,
+                config.ef_construction,
+            ),
+            HnswDistanceMetric::Cosine => HnswIndex::with_cosine(
+                config.dimensions,
+                config.max_neighbors,
+                config.ef_construction,
+            ),
         };
 
         let quantizer = RaBitQIndex::new(config.dimensions, config.seed);
@@ -163,7 +163,8 @@ impl HnswRaBitQ {
         let code = if self.config.rabitq_bits == 1 {
             self.quantizer.encode(&vector)
         } else {
-            self.quantizer.encode_multibit(&vector, self.config.rabitq_bits)
+            self.quantizer
+                .encode_multibit(&vector, self.config.rabitq_bits)
         };
 
         // Insert into HNSW (this stores the full float vector + builds graph)
@@ -196,7 +197,9 @@ impl HnswRaBitQ {
     /// Returns the number of re-encoded codes.
     pub fn rebuild_with_centroid(&self) -> usize {
         let n = self.codes.len();
-        if n == 0 { return 0; }
+        if n == 0 {
+            return 0;
+        }
 
         // Compute mean centroid from all vectors in HNSW
         let mut centroid = vec![0.0f32; self.config.dimensions];
@@ -211,7 +214,9 @@ impl HnswRaBitQ {
             count += 1;
         }
 
-        if count == 0 { return 0; }
+        if count == 0 {
+            return 0;
+        }
 
         // Normalize to mean
         let inv = 1.0 / count as f32;
@@ -231,7 +236,8 @@ impl HnswRaBitQ {
             let code = if self.config.rabitq_bits == 1 {
                 self.quantizer.encode(&entry.1.vector)
             } else {
-                self.quantizer.encode_multibit(&entry.1.vector, self.config.rabitq_bits)
+                self.quantizer
+                    .encode_multibit(&entry.1.vector, self.config.rabitq_bits)
             };
             self.codes.insert(node_id, code);
             recoded += 1;
@@ -285,7 +291,9 @@ impl HnswRaBitQ {
         let mut results: Vec<RaBitQSearchResult> = hnsw_candidates
             .into_iter()
             .map(|(node_id, float_dist)| {
-                let est_dist = self.codes.get(&node_id)
+                let est_dist = self
+                    .codes
+                    .get(&node_id)
                     .map(|code| self.quantizer.estimate_distance(&rq, &code).0)
                     .unwrap_or(float_dist);
 
@@ -344,9 +352,10 @@ impl HnswRaBitQ {
                 .into_iter()
                 .take(rerank_n)
                 .map(|(node_id, est_dist)| {
-                    let precise = self.hnsw.get_vector(&node_id).map(|v| {
-                        self.hnsw.compute_dist(query, &v)
-                    });
+                    let precise = self
+                        .hnsw
+                        .get_vector(&node_id)
+                        .map(|v| self.hnsw.compute_dist(query, &v));
                     RaBitQSearchResult {
                         node_id,
                         estimated_dist: est_dist,
@@ -475,10 +484,8 @@ impl HnswRaBitQ {
         }
 
         // Extract results sorted by distance ascending
-        let mut results: Vec<(NodeId, f32)> = result
-            .into_iter()
-            .map(|(OrdF32(d), id)| (id, d))
-            .collect();
+        let mut results: Vec<(NodeId, f32)> =
+            result.into_iter().map(|(OrdF32(d), id)| (id, d)).collect();
         results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         results
     }
@@ -507,7 +514,12 @@ impl HnswRaBitQ {
         let float_bytes = n * d * 4; // full float vectors in HNSW nodes
         let rabitq_bytes = n * (d * self.config.rabitq_bits as usize / 8 + 16); // codes + factors
 
-        (graph_bytes, float_bytes, rabitq_bytes, graph_bytes + float_bytes + rabitq_bytes)
+        (
+            graph_bytes,
+            float_bytes,
+            rabitq_bytes,
+            graph_bytes + float_bytes + rabitq_bytes,
+        )
     }
 
     /// Access the underlying HNSW index (for graph statistics, etc.)
@@ -549,8 +561,8 @@ impl Ord for OrdF32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::{Rng, SeedableRng};
     use rand::rngs::StdRng;
+    use rand::{Rng, SeedableRng};
 
     fn random_vector(rng: &mut impl Rng, dim: usize) -> Vec<f32> {
         (0..dim).map(|_| rng.gen::<f32>() * 2.0 - 1.0).collect()
@@ -572,7 +584,9 @@ mod tests {
         // Insert 100 vectors
         for _ in 0..100 {
             let v = random_vector(&mut rng, 32);
-            let meta = MetaData { label: "test".into() };
+            let meta = MetaData {
+                label: "test".into(),
+            };
             index.insert(v, meta);
         }
         index.publish_snapshot();
@@ -586,11 +600,7 @@ mod tests {
         for w in results.windows(2) {
             let d0 = w[0].precise_dist.unwrap_or(w[0].estimated_dist);
             let d1 = w[1].precise_dist.unwrap_or(w[1].estimated_dist);
-            assert!(
-                d0 <= d1 + 1e-6,
-                "Results not sorted: {} > {}",
-                d0, d1
-            );
+            assert!(d0 <= d1 + 1e-6, "Results not sorted: {} > {}", d0, d1);
         }
     }
 
@@ -692,13 +702,19 @@ mod tests {
         assert_eq!(results.len(), 10);
         // With float rerank, all should have precise distances
         for r in &results {
-            assert!(r.precise_dist.is_some(), "Float rerank should set precise_dist");
+            assert!(
+                r.precise_dist.is_some(),
+                "Float rerank should set precise_dist"
+            );
         }
         // Should be sorted by precise distance
         for w in results.windows(2) {
             let d0 = w[0].precise_dist.unwrap();
             let d1 = w[1].precise_dist.unwrap();
-            assert!(d0 <= d1 + 1e-6, "Results should be sorted by precise distance");
+            assert!(
+                d0 <= d1 + 1e-6,
+                "Results should be sorted by precise distance"
+            );
         }
     }
 

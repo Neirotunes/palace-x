@@ -108,7 +108,8 @@ impl MemoryPalace {
     /// Publish HNSW snapshot for wait-free reads (call after batch insertion).
     pub fn publish_snapshot(&self) {
         self.hnsw.publish_snapshot();
-        self.inserts_since_snapshot.store(0, AtomicOrdering::Release);
+        self.inserts_since_snapshot
+            .store(0, AtomicOrdering::Release);
     }
 
     /// Get ego-graph cache statistics: (hits, misses).
@@ -183,7 +184,9 @@ impl MemoryProvider for MemoryPalace {
         }
 
         // Auto-publish snapshot every 1000 inserts for incremental availability
-        let count = self.inserts_since_snapshot.fetch_add(1, AtomicOrdering::Relaxed);
+        let count = self
+            .inserts_since_snapshot
+            .fetch_add(1, AtomicOrdering::Relaxed);
         if count > 0 && count % 1000 == 0 {
             self.hnsw.publish_snapshot();
         }
@@ -251,7 +254,9 @@ impl MemoryProvider for MemoryPalace {
             .take(config.rerank_k)
             .filter_map(|(node_id, _)| {
                 vector_store.get(node_id).and_then(|vec| {
-                    metadata_store.get(node_id).map(|meta| (*node_id, vec, meta))
+                    metadata_store
+                        .get(node_id)
+                        .map(|meta| (*node_id, vec, meta))
                 })
             })
             .collect();
@@ -278,12 +283,14 @@ impl MemoryProvider for MemoryPalace {
                 .ranked
                 .iter()
                 .filter_map(|(idx, dist)| {
-                    valid_candidates.get(*idx).map(|(node_id, _, meta)| Fragment {
-                        node_id: *node_id,
-                        score: 1.0 / (1.0 + dist), // Convert L2 distance to score (closer = higher)
-                        metadata: (*meta).clone(),
-                        vector: None,
-                    })
+                    valid_candidates
+                        .get(*idx)
+                        .map(|(node_id, _, meta)| Fragment {
+                            node_id: *node_id,
+                            score: 1.0 / (1.0 + dist), // Convert L2 distance to score (closer = higher)
+                            metadata: (*meta).clone(),
+                            vector: None,
+                        })
                 })
                 .collect()
         } else {

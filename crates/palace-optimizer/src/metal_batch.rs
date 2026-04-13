@@ -293,7 +293,8 @@ impl MetalBatchSearch {
             query_buf: device.new_buffer(query_bytes as u64, MTLResourceOptions::StorageModeShared),
             cand_buf: device.new_buffer(cand_bytes as u64, MTLResourceOptions::StorageModeShared),
             dist_buf: device.new_buffer(dist_bytes as u64, MTLResourceOptions::StorageModeShared),
-            params_buf: device.new_buffer(params_bytes as u64, MTLResourceOptions::StorageModeShared),
+            params_buf: device
+                .new_buffer(params_bytes as u64, MTLResourceOptions::StorageModeShared),
             cand_capacity: cand_bytes,
             dist_capacity: PREALLOC_CANDIDATES,
             query_capacity: query_bytes,
@@ -330,7 +331,11 @@ impl MetalBatchSearch {
     /// Currently active threshold (calibrated or default).
     pub fn active_threshold(&self) -> usize {
         let t = self.calibrated_threshold.load(Ordering::Relaxed);
-        if t == 0 { GPU_THRESHOLD } else { t }
+        if t == 0 {
+            GPU_THRESHOLD
+        } else {
+            t
+        }
     }
 
     /// Empirically find the GPU vs CPU crossover for this device + `dims`.
@@ -455,24 +460,21 @@ impl MetalBatchSearch {
         // Grow pre-allocated buffers if this call exceeds capacity.
         // Growth is rare after warm-up — typically 0-1 reallocs per session.
         if query_bytes > bufs.query_capacity {
-            bufs.query_buf = self.device.new_buffer(
-                query_bytes as u64,
-                MTLResourceOptions::StorageModeShared,
-            );
+            bufs.query_buf = self
+                .device
+                .new_buffer(query_bytes as u64, MTLResourceOptions::StorageModeShared);
             bufs.query_capacity = query_bytes;
         }
         if cand_bytes > bufs.cand_capacity {
-            bufs.cand_buf = self.device.new_buffer(
-                cand_bytes as u64,
-                MTLResourceOptions::StorageModeShared,
-            );
+            bufs.cand_buf = self
+                .device
+                .new_buffer(cand_bytes as u64, MTLResourceOptions::StorageModeShared);
             bufs.cand_capacity = cand_bytes;
         }
         if num_candidates > bufs.dist_capacity {
-            bufs.dist_buf = self.device.new_buffer(
-                dist_bytes as u64,
-                MTLResourceOptions::StorageModeShared,
-            );
+            bufs.dist_buf = self
+                .device
+                .new_buffer(dist_bytes as u64, MTLResourceOptions::StorageModeShared);
             bufs.dist_capacity = num_candidates;
         }
 
@@ -634,13 +636,11 @@ pub fn gpu_rerank(
         .map(|i| {
             let cand = &candidate_vecs[i * dims..(i + 1) * dims];
             let dist = match metric {
-                MetalDistanceMetric::L2 => {
-                    query
-                        .iter()
-                        .zip(cand.iter())
-                        .map(|(a, b)| (a - b) * (a - b))
-                        .sum()
-                }
+                MetalDistanceMetric::L2 => query
+                    .iter()
+                    .zip(cand.iter())
+                    .map(|(a, b)| (a - b) * (a - b))
+                    .sum(),
                 MetalDistanceMetric::Cosine => {
                     let dot: f32 = query.iter().zip(cand.iter()).map(|(a, b)| a * b).sum();
                     let nq: f32 = query.iter().map(|a| a * a).sum();
@@ -704,7 +704,12 @@ mod tests {
 
         // Verify distances are sorted ascending
         for w in result.ranked.windows(2) {
-            assert!(w[0].1 <= w[1].1 + 1e-6, "Results not sorted: {} > {}", w[0].1, w[1].1);
+            assert!(
+                w[0].1 <= w[1].1 + 1e-6,
+                "Results not sorted: {} > {}",
+                w[0].1,
+                w[1].1
+            );
         }
     }
 
@@ -715,13 +720,24 @@ mod tests {
         let query: Vec<f32> = (0..dims).map(|i| (i as f32).sin()).collect();
         let candidates = make_vectors(n, dims, 99);
 
-        let result = gpu_rerank(None, &query, &candidates, dims, MetalDistanceMetric::Cosine, 5);
+        let result = gpu_rerank(
+            None,
+            &query,
+            &candidates,
+            dims,
+            MetalDistanceMetric::Cosine,
+            5,
+        );
         assert!(!result.used_gpu);
         assert_eq!(result.ranked.len(), 5);
 
         // Cosine distances should be in [0, 2]
         for (_, d) in &result.ranked {
-            assert!(*d >= -0.01 && *d <= 2.01, "Cosine distance out of range: {}", d);
+            assert!(
+                *d >= -0.01 && *d <= 2.01,
+                "Cosine distance out of range: {}",
+                d
+            );
         }
     }
 
@@ -746,7 +762,11 @@ mod tests {
         let result = gpu_rerank(None, &query, &candidates, dims, MetalDistanceMetric::L2, 5);
         // First result should be index 0 with distance ~0
         assert_eq!(result.ranked[0].0, 0);
-        assert!(result.ranked[0].1 < 1e-6, "Self-distance should be ~0, got {}", result.ranked[0].1);
+        assert!(
+            result.ranked[0].1 < 1e-6,
+            "Self-distance should be ~0, got {}",
+            result.ranked[0].1
+        );
     }
 
     // GPU tests — only run on Apple Silicon with Metal support.
@@ -785,7 +805,10 @@ mod tests {
             assert!(
                 diff < 0.1, // Metal fp32 rounding can differ slightly
                 "GPU/CPU mismatch at {}: gpu={}, cpu={}, diff={}",
-                i, gpu_dists[i], cpu_dist, diff
+                i,
+                gpu_dists[i],
+                cpu_dist,
+                diff
             );
         }
 
