@@ -46,6 +46,7 @@ jobs:
             -A unused_imports \
             -A unused_mut \
             -A unused_assignments \
+            -A unused_unsafe \
             -A clippy::manual_div_ceil \
             -A clippy::redundant_closure \
             -A clippy::map_entry \
