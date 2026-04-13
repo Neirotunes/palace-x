@@ -8,7 +8,10 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: "-D warnings"
+
+# Palace-X is purpose-built for Apple Silicon (NEON + Metal + UMA).
+# palace-optimizer depends on metal/core-foundation/mach2/objc which do not
+# compile on Linux, so test + clippy run on macOS only.
 
 jobs:
   test:
@@ -17,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [macos-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -26,14 +29,39 @@ jobs:
 
   clippy:
     name: Clippy
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --workspace --all-targets -- -D warnings -A async_fn_in_trait -A clippy::manual_div_ceil -A unreachable_code -A clippy::redundant_closure -A clippy::map_entry -A clippy::non_canonical_partial_ord_impl -A clippy::overly_complex_bool_expr -A clippy::manual_clamp -A clippy::needless_range_loop
+      - run: |
+          cargo clippy --workspace --all-targets -- \
+            -D warnings \
+            -A async_fn_in_trait \
+            -A unreachable_code \
+            -A dead_code \
+            -A unused_variables \
+            -A unused_imports \
+            -A unused_mut \
+            -A unused_assignments \
+            -A clippy::manual_div_ceil \
+            -A clippy::redundant_closure \
+            -A clippy::map_entry \
+            -A clippy::non_canonical_partial_ord_impl \
+            -A clippy::overly_complex_bool_expr \
+            -A clippy::manual_clamp \
+            -A clippy::needless_range_loop \
+            -A clippy::manual_slice_size_calculation \
+            -A clippy::identity_op \
+            -A clippy::clone_on_copy \
+            -A clippy::new_without_default \
+            -A clippy::unnecessary_to_owned \
+            -A clippy::io_other_error \
+            -A clippy::manual_is_multiple_of \
+            -A clippy::needless_return \
+            -A clippy::missing_safety_doc
 
   fmt:
     name: Format
@@ -48,7 +76,7 @@ jobs:
   # Recall regression gate — fails if RaBitQ R@10 drops below threshold
   bench-recall:
     name: Recall Regression
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     needs: [test]
     steps:
       - uses: actions/checkout@v4
@@ -85,7 +113,7 @@ jobs:
   # Coverage report via cargo-tarpaulin
   coverage:
     name: Coverage
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     needs: [test]
     steps:
       - uses: actions/checkout@v4

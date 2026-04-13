@@ -16,14 +16,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Palace-X is Apple Silicon only (NEON + Metal + UMA).
+          # palace-optimizer depends on metal/core-foundation/mach2/objc
+          # which do not compile on Linux or Intel macOS.
           - os: macos-latest
             target: aarch64-apple-darwin
-            suffix: ""
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            suffix: ""
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
             suffix: ""
     steps:
       - uses: actions/checkout@v4
