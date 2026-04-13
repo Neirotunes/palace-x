@@ -781,6 +781,180 @@ fn bench_rabitq_neon(dims: usize, n_codes: usize) {
     );
 }
 
+// ─── HNSW+RaBitQ Combined Pipeline Benchmark ──────────────────────
+
+fn bench_hnsw_rabitq(dims: usize, n: usize) {
+    println!(
+        "\n═══ HNSW+RaBitQ Combined Pipeline (dims={}, n={}) ═══",
+        dims, n
+    );
+    let mut rng = rand::thread_rng();
+
+    // Build combined index (4-bit, no float rerank)
+    let config_pure = palace_storage::HnswRaBitQConfig {
+        dimensions: dims,
+        max_neighbors: 16,
+        ef_construction: 200,
+        rabitq_bits: 4,
+        rerank_top: 0,
+        ..Default::default()
+    };
+    let combined = palace_storage::HnswRaBitQ::new(config_pure);
+
+    // Build combined index with float rerank
+    let config_rerank = palace_storage::HnswRaBitQConfig {
+        dimensions: dims,
+        max_neighbors: 16,
+        ef_construction: 200,
+        rabitq_bits: 4,
+        rerank_top: 50,
+        ..Default::default()
+    };
+    let combined_rerank = palace_storage::HnswRaBitQ::new(config_rerank);
+
+    // Build pure float HNSW as baseline
+    let pure_hnsw = HnswIndex::new(dims, 16, 200);
+
+    // Insert same vectors into all
+    let vectors: Vec<Vec<f32>> = (0..n)
+        .map(|_| random_vector(&mut rng, dims))
+        .collect();
+
+    let insert_start = Instant::now();
+    for v in &vectors {
+        let meta = GraphMetaData { label: "b".into() };
+        combined.insert(v.clone(), meta.clone());
+        combined_rerank.insert(v.clone(), meta.clone());
+        pure_hnsw.insert(v.clone(), meta);
+    }
+    let insert_elapsed = insert_start.elapsed();
+    combined.publish_snapshot();
+    combined_rerank.publish_snapshot();
+    pure_hnsw.publish_snapshot();
+
+    println!("  Build time: {:?} ({} vectors × 3 indices)", insert_elapsed, n);
+
+    let (graph_b, float_b, rq_b, total_b) = combined.memory_estimate();
+    println!(
+        "  Memory: graph={:.0}KB float={:.0}KB rabitq={:.0}KB total={:.0}KB",
+        graph_b as f64 / 1024.0,
+        float_b as f64 / 1024.0,
+        rq_b as f64 / 1024.0,
+        total_b as f64 / 1024.0,
+    );
+
+    // ── QPS + Recall comparison ──
+    let n_queries = 200;
+    let k = 10;
+    let queries: Vec<Vec<f32>> = (0..n_queries)
+        .map(|_| random_vector(&mut rng, dims))
+        .collect();
+
+    // Ground truth: brute-force float L2
+    let gt: Vec<Vec<NodeId>> = queries
+        .iter()
+        .map(|q| {
+            let mut dists: Vec<(NodeId, f32)> = vectors
+                .iter()
+                .enumerate()
+                .map(|(i, v)| {
+                    let d: f32 = q.iter().zip(v.iter()).map(|(a, b)| (a - b) * (a - b)).sum();
+                    (NodeId(i as u64), d)
+                })
+                .collect();
+            dists.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+            dists.into_iter().take(k).map(|(id, _)| id).collect()
+        })
+        .collect();
+
+    // Benchmark configs
+    let configs: Vec<(&str, usize)> = vec![
+        ("HNSW+RaBitQ ef=32", 32),
+        ("HNSW+RaBitQ ef=64", 64),
+        ("HNSW+RaBitQ ef=128", 128),
+    ];
+
+    println!("\n  ┌──────────────────────────────┬──────────┬──────────┬──────────┐");
+    println!("  │ Method                       │ R@10     │ QPS      │ vs HNSW  │");
+    println!("  ├──────────────────────────────┼──────────┼──────────┼──────────┤");
+
+    // Pure HNSW baseline (ef=64)
+    let start = Instant::now();
+    let mut hnsw_recall = 0.0;
+    for (i, q) in queries.iter().enumerate() {
+        let results: Vec<NodeId> = pure_hnsw
+            .search(q, Some(64))
+            .into_iter()
+            .take(k)
+            .map(|(id, _)| id)
+            .collect();
+        let gt_set: std::collections::HashSet<NodeId> = gt[i].iter().cloned().collect();
+        let res_set: std::collections::HashSet<NodeId> = results.into_iter().collect();
+        hnsw_recall += gt_set.intersection(&res_set).count() as f64 / k as f64;
+    }
+    let hnsw_elapsed = start.elapsed();
+    let hnsw_qps = n_queries as f64 / hnsw_elapsed.as_secs_f64();
+    hnsw_recall /= n_queries as f64;
+    println!(
+        "  │ {:<28} │ {:>6.1}%  │ {:>8.0} │   1.0x   │",
+        "HNSW Float ef=64", hnsw_recall * 100.0, hnsw_qps
+    );
+
+    // Combined configs
+    for (name, ef) in &configs {
+        combined.set_ef_search(*ef);
+
+        let start = Instant::now();
+        let mut recall = 0.0;
+        for (i, q) in queries.iter().enumerate() {
+            let results: Vec<NodeId> = combined
+                .search(q, k)
+                .into_iter()
+                .map(|r| r.node_id)
+                .collect();
+            let gt_set: std::collections::HashSet<NodeId> = gt[i].iter().cloned().collect();
+            let res_set: std::collections::HashSet<NodeId> = results.into_iter().collect();
+            recall += gt_set.intersection(&res_set).count() as f64 / k as f64;
+        }
+        let elapsed = start.elapsed();
+        let qps = n_queries as f64 / elapsed.as_secs_f64();
+        recall /= n_queries as f64;
+        let speedup = qps / hnsw_qps;
+        println!(
+            "  │ {:<28} │ {:>6.1}%  │ {:>8.0} │  {:>5.2}x  │",
+            name, recall * 100.0, qps, speedup
+        );
+    }
+
+    // Combined with float rerank
+    combined_rerank.set_ef_search(128);
+    let start = Instant::now();
+    let mut rerank_recall = 0.0;
+    for (i, q) in queries.iter().enumerate() {
+        let results: Vec<NodeId> = combined_rerank
+            .search(q, k)
+            .into_iter()
+            .map(|r| r.node_id)
+            .collect();
+        let gt_set: std::collections::HashSet<NodeId> = gt[i].iter().cloned().collect();
+        let res_set: std::collections::HashSet<NodeId> = results.into_iter().collect();
+        rerank_recall += gt_set.intersection(&res_set).count() as f64 / k as f64;
+    }
+    let rerank_elapsed = start.elapsed();
+    let rerank_qps = n_queries as f64 / rerank_elapsed.as_secs_f64();
+    rerank_recall /= n_queries as f64;
+    let rerank_speedup = rerank_qps / hnsw_qps;
+    println!(
+        "  │ {:<28} │ {:>6.1}%  │ {:>8.0} │  {:>5.2}x  │",
+        "HNSW+RaBitQ ef=128+rerank50",
+        rerank_recall * 100.0,
+        rerank_qps,
+        rerank_speedup
+    );
+
+    println!("  └──────────────────────────────┴──────────┴──────────┴──────────┘");
+}
+
 // ─── Main ──────────────────────────────────────────────────────────
 
 fn main() {
@@ -809,6 +983,7 @@ fn main() {
     if !sift_only {
         let dims = 384;
         bench_rabitq_neon(dims, 10_000);
+        bench_hnsw_rabitq(128, 10_000); // SIFT-dim for apples-to-apples comparison
         bench_metal_batch(dims);
         bench_uma_hnsw(dims, 5_000);
         bench_full_pipeline(dims, 5_000);

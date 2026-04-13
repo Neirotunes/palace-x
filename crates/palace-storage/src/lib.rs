@@ -21,8 +21,10 @@
 //! - Replaced raw UMA arena pointers with safe `Vec<f32>` storage (use-after-free fix)
 //! - Auto-publish HNSW snapshot every 1000 inserts
 
+pub mod hnsw_rabitq;
 pub mod memory_palace;
 pub mod stats;
 
+pub use hnsw_rabitq::{HnswRaBitQ, HnswRaBitQConfig, RaBitQSearchResult};
 pub use memory_palace::MemoryPalace;
 pub use stats::PalaceStats;

@@ -13,6 +13,7 @@ palace-quant = { workspace = true }
 palace-graph = { workspace = true }
 palace-topo = { workspace = true }
 palace-bitplane = { workspace = true }
+dashmap = { workspace = true }
 parking_lot = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
