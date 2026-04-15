@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "palace": {
+      "command": "cargo",
+      "args": [
+        "run",
+        "--bin", "palace-mcp",
+        "--manifest-path", "Cargo.toml",
+        "--release"
+      ],
+      "env": {
+        "PALACE_DIMS": "128",
+        "RUST_LOG": "palace_mcp=info"
+      }
+    }
+  }
+}
