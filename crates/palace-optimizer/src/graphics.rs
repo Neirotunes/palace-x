@@ -7,6 +7,7 @@ use objc::rc::autoreleasepool;
 /// Latent Sync Frame Interpolator.
 /// Uses Metal to perform motion-vector based interpolation in UMA memory.
 pub struct FrameInterpolator {
+    #[allow(dead_code)]
     device: Device,
     command_queue: CommandQueue,
     pipeline: ComputePipelineState,
@@ -77,8 +78,8 @@ impl FrameInterpolator {
             };
 
             let groups = MTLSize {
-                width: (output.width() + w - 1) / w,
-                height: (output.height() + h - 1) / h,
+                width: output.width().div_ceil(w),
+                height: output.height().div_ceil(h),
                 depth: 1,
             };
 

@@ -17,7 +17,7 @@
 /// # Returns
 /// Vec<u64> where each u64 packs 64 binary bits (threshold at 0.0)
 pub fn quantize_binary(vector: &[f32]) -> Vec<u64> {
-    let num_words = (vector.len() + 63) / 64;
+    let num_words = vector.len().div_ceil(64);
     let mut result = vec![0u64; num_words];
 
     for (i, &value) in vector.iter().enumerate() {

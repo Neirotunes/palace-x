@@ -1,4 +1,4 @@
-use palace_quant::rabitq::{RaBitQCode, RaBitQIndex};
+use palace_quant::rabitq::RaBitQIndex;
 use rand::Rng;
 
 fn main() {
@@ -23,7 +23,7 @@ fn main() {
     let q = index.encode_query(&v1);
     let code = index.encode_multibit(&v2, 4);
 
-    let (est_dist, lb) = index.estimate_distance(&q, &code);
+    let (est_dist, _lb) = index.estimate_distance(&q, &code);
 
     println!("RaBitQ Estimate: {}", est_dist);
     println!(
@@ -31,8 +31,8 @@ fn main() {
         (est_dist - sqr_dist).abs() / sqr_dist * 100.0
     );
 
-    let q_res: Vec<f32> = v1.iter().map(|a| a).cloned().collect();
-    let v_res: Vec<f32> = v2.iter().map(|a| a).cloned().collect();
+    let q_res: Vec<f32> = v1.to_vec();
+    let v_res: Vec<f32> = v2.to_vec();
 
     let q_norm = q_res.iter().map(|x| x * x).sum::<f32>().sqrt();
     let v_norm = v_res.iter().map(|x| x * x).sum::<f32>().sqrt();

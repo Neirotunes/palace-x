@@ -43,7 +43,7 @@ impl BitPlaneVector {
     /// Decompose an f32 vector into bit planes.
     pub fn from_f32(vector: &[f32]) -> Self {
         let dimensions = vector.len();
-        let bytes_per_plane = (dimensions + 7) / 8;
+        let bytes_per_plane = dimensions.div_ceil(8);
 
         let mut sign_plane = vec![0u8; bytes_per_plane];
         let mut exponent_planes = vec![vec![0u8; bytes_per_plane]; Self::NUM_EXPONENT_BITS];
@@ -61,6 +61,7 @@ impl BitPlaneVector {
             }
 
             // Extract and store exponent bits (bits 30-23)
+            #[allow(clippy::needless_range_loop)]
             for exp_plane in 0..Self::NUM_EXPONENT_BITS {
                 let exp_bit = (bits >> (23 + exp_plane)) & 1;
                 if exp_bit != 0 {
@@ -69,6 +70,7 @@ impl BitPlaneVector {
             }
 
             // Extract and store mantissa bits (bits 22-0)
+            #[allow(clippy::needless_range_loop)]
             for mant_plane in 0..Self::NUM_MANTISSA_BITS {
                 let mant_bit = (bits >> mant_plane) & 1;
                 if mant_bit != 0 {
@@ -146,14 +148,14 @@ impl BitPlaneVector {
 
     /// Calculate storage size in bytes for coarse planes only (sign + exponent).
     pub fn coarse_size_bytes(&self) -> usize {
-        let bytes_per_plane = (self.dimensions + 7) / 8;
+        let bytes_per_plane = self.dimensions.div_ceil(8);
         // 1 sign plane + 8 exponent planes
         (1 + Self::NUM_EXPONENT_BITS) * bytes_per_plane
     }
 
     /// Calculate storage size in bytes for all planes.
     pub fn total_size_bytes(&self) -> usize {
-        let bytes_per_plane = (self.dimensions + 7) / 8;
+        let bytes_per_plane = self.dimensions.div_ceil(8);
         Self::TOTAL_PLANES * bytes_per_plane
     }
 
@@ -167,7 +169,7 @@ impl BitPlaneVector {
     /// Values < 1.0 indicate compression.
     pub fn compression_ratio(&self, mantissa_bits: u8) -> f32 {
         let original_bytes = (self.dimensions * 4) as f32;
-        let bytes_per_plane = ((self.dimensions + 7) / 8) as f32;
+        let bytes_per_plane = self.dimensions.div_ceil(8) as f32;
         let planes_used = 1 + Self::NUM_EXPONENT_BITS + (mantissa_bits as usize);
         let used_bytes = (planes_used as f32) * bytes_per_plane;
         used_bytes / original_bytes

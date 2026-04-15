@@ -8,7 +8,7 @@
 
 use std::fs::{self, File};
 use std::io::{self, BufReader, Read};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 // ─── Dataset Structure ────────────────────────────────────────────
@@ -166,8 +166,7 @@ fn download_sift1m(data_dir: &Path) -> io::Result<()> {
             let _ = fs::remove_file(&tar_path);
         }
         if !ok {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
+            return Err(io::Error::other(
                 "Failed to download SIFT-1M. Download manually:\n\
                  curl -O http://corpus-texmex.irisa.fr/sift.tar.gz\n\
                  tar xzf sift.tar.gz -C data/",
@@ -183,7 +182,7 @@ fn download_sift1m(data_dir: &Path) -> io::Result<()> {
         .arg(data_dir)
         .status()?;
     if !status.success() {
-        return Err(io::Error::new(io::ErrorKind::Other, "tar extract failed"));
+        return Err(io::Error::other("tar extract failed"));
     }
     Ok(())
 }
@@ -214,8 +213,7 @@ fn download_siftsmall(data_dir: &Path) -> io::Result<()> {
             let _ = fs::remove_file(&tar_path);
         }
         if !ok {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
+            return Err(io::Error::other(
                 "Failed to download siftsmall. Download manually to data/siftsmall/",
             ));
         }
@@ -229,7 +227,7 @@ fn download_siftsmall(data_dir: &Path) -> io::Result<()> {
         .arg(data_dir)
         .status()?;
     if !status.success() {
-        return Err(io::Error::new(io::ErrorKind::Other, "tar extract failed"));
+        return Err(io::Error::other("tar extract failed"));
     }
     Ok(())
 }
@@ -253,6 +251,7 @@ pub fn recall_at_k(retrieved: &[usize], ground_truth: &[u32], k: usize) -> f32 {
 }
 
 /// Mean Reciprocal Rank @k.
+#[allow(dead_code)]
 pub fn mrr_at_k(retrieved: &[usize], ground_truth: &[u32], k: usize) -> f32 {
     let gt_set: std::collections::HashSet<usize> =
         ground_truth.iter().take(k).map(|&x| x as usize).collect();
@@ -265,6 +264,7 @@ pub fn mrr_at_k(retrieved: &[usize], ground_truth: &[u32], k: usize) -> f32 {
 }
 
 /// Brute-force ground truth using L2 distance.
+#[allow(dead_code)]
 pub fn compute_ground_truth_l2(base: &[Vec<f32>], queries: &[Vec<f32>], k: usize) -> Vec<Vec<u32>> {
     queries
         .iter()

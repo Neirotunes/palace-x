@@ -15,6 +15,12 @@ pub struct SpeculativePrefetcher {
     markov_table: RwLock<HashMap<(AssetId, AssetId), f32>>,
 }
 
+impl Default for SpeculativePrefetcher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SpeculativePrefetcher {
     pub fn new() -> Self {
         Self {

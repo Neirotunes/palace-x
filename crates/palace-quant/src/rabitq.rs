@@ -78,6 +78,7 @@ impl FastRotation {
         let scale = 1.0 / (self.padded_dim as f32).sqrt();
         for round in 0..3 {
             // Element-wise sign flip
+            #[allow(clippy::needless_range_loop)]
             for i in 0..self.padded_dim {
                 buf[i] *= self.signs[round][i];
             }
@@ -173,8 +174,8 @@ impl RaBitQIndex {
                 new_centroid[i] += v;
             }
         }
-        for i in 0..self.dim {
-            new_centroid[i] /= samples.len() as f32;
+        for val in new_centroid.iter_mut() {
+            *val /= samples.len() as f32;
         }
         self.centroid = new_centroid;
     }
@@ -257,7 +258,7 @@ impl RaBitQIndex {
         // For 4-bit: linear quantization to [0, 15], stored as 4 bit-planes (LSB-first)
         // For 7-bit: linear quantization to [0, 127], stored as 7 bit-planes
         let mut binary = Vec::new();
-        let words_per_plane = (self.dim + 63) / 64;
+        let words_per_plane = self.dim.div_ceil(64);
         // Keep quantized values accessible for x0 computation (multi-bit only)
         let mut quantized = vec![0u8; self.dim];
 
@@ -383,7 +384,7 @@ impl RaBitQIndex {
     #[inline]
     pub fn estimate_distance(&self, query: &RaBitQQuery, code: &RaBitQCode) -> (f32, f32) {
         let d = self.dim as f32;
-        let words_per_plane = (self.dim + 63) / 64;
+        let words_per_plane = self.dim.div_ceil(64);
 
         let x_dot_q = if code.bits == 1 {
             // Standard 1-bit: ⟨x_bar, q'⟩ with x_bar ∈ {-1, +1}^D
@@ -417,7 +418,7 @@ impl RaBitQIndex {
             // NEON path: 2·masked_sum − sum_q (branchless)
             let masked_sum = unsafe { neon_masked_sum(sign_bits, q_rotated.as_ptr(), self.dim) };
             let sum_q = unsafe { neon_sum_f32(q_rotated, self.dim) };
-            return 2.0 * masked_sum - sum_q;
+            2.0 * masked_sum - sum_q
         }
 
         #[cfg(not(target_arch = "aarch64"))]
@@ -539,7 +540,7 @@ unsafe fn neon_masked_sum(bit_words: &[u64], q_ptr: *const f32, dim: usize) -> f
     let mut acc1 = vdupq_n_f32(0.0);
     let mut q_offset = 0usize;
 
-    for &word in &bit_words[..((dim + 63) / 64)] {
+    for &word in &bit_words[..dim.div_ceil(64)] {
         let remaining = dim - q_offset;
         let word_count = remaining.min(64);
         let mut bits = word;
@@ -567,7 +568,8 @@ unsafe fn neon_masked_sum(bit_words: &[u64], q_ptr: *const f32, dim: usize) -> f
         // ── 4-wide tail ──
         if j + 4 <= word_count {
             let nibble = (bits & 0xF) as u32;
-            bits >>= 4;
+            #[allow(unused_assignments)]
+            { bits >>= 4; }
             let mask = vtstq_u32(vdupq_n_u32(nibble), selector);
             let q = vld1q_f32(q_ptr.add(q_offset + j));
             acc0 = vaddq_f32(acc0, vbslq_f32(mask, q, zero));
@@ -931,7 +933,7 @@ mod tests {
         let code = index.encode_multibit(&vector, 4);
 
         // 4 planes × ceil(64/64) = 4 u64 words
-        let words_per_plane = (dim + 63) / 64;
+        let words_per_plane = dim.div_ceil(64);
         assert_eq!(code.binary.len(), 4 * words_per_plane);
         assert_eq!(code.bits, 4);
         assert!(
@@ -1147,10 +1149,11 @@ mod tests {
             let v: Vec<f32> = (0..dim).map(|_| rng.gen::<f32>() * 2.0 - 1.0).collect();
             let code = index.encode(&v);
             let q: Vec<f32> = (0..dim).map(|_| rng.gen::<f32>() * 2.0 - 1.0).collect();
-            let words_per_plane = (dim + 63) / 64;
+            let words_per_plane = dim.div_ceil(64);
 
             // Scalar reference
             let mut scalar_result: f32 = 0.0;
+            #[allow(clippy::needless_range_loop)]
             for i in 0..dim {
                 let bit = (code.binary[i / 64] >> (i % 64)) & 1;
                 if bit == 1 {
@@ -1162,6 +1165,7 @@ mod tests {
 
             // Algebraic: 2·masked_sum − sum_q
             let mut masked_sum: f32 = 0.0;
+            #[allow(clippy::needless_range_loop)]
             for i in 0..dim {
                 if (code.binary[i / 64] >> (i % 64)) & 1 == 1 {
                     masked_sum += q[i];

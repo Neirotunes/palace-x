@@ -254,8 +254,7 @@ async fn handle_search(
         .get("limit")
         .and_then(|v| v.as_u64())
         .unwrap_or(5)
-        .max(1)
-        .min(100) as usize;
+        .clamp(1, 100) as usize;
 
     let config = SearchConfig::default_with_limit(limit);
     let fragments = engine

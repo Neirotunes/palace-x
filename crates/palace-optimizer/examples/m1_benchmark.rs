@@ -39,9 +39,7 @@ fn main() {
     // 4. Speculative Prefetching
     let prefetcher = SpeculativePrefetcher::new();
     prefetcher.record_access(42);
-    unsafe {
-        prefetcher.prefetch_predicted(42, px.as_ptr() as *const u8);
-    }
+    prefetcher.prefetch_predicted(42, px.as_ptr() as *const u8);
     println!("Prefetching: Hints issued via ARM64 PRFM");
 
     println!("\nBenchmark Complete. System is operating at peak Apple Silicon efficiency.");

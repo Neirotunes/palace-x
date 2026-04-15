@@ -61,7 +61,7 @@ pub enum QosClass {
 }
 
 /// Sets the QoS class and scheduling priority for the current thread.
-pub fn set_thread_qos(class: QosClass) {
+pub fn set_thread_qos(_class: QosClass) {
     unsafe {
         // High-priority real-time scheduling
         let mut param: libc::sched_param = mem::zeroed();

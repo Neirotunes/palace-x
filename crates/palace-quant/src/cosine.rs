@@ -45,7 +45,7 @@ pub fn cosine_distance(a: &[f32], b: &[f32]) -> f32 {
     let similarity = dot / (norm_a * norm_b);
 
     // Clamp to [-1, 1] for numerical stability
-    let clamped = similarity.max(-1.0).min(1.0);
+    let clamped = similarity.clamp(-1.0, 1.0);
     1.0 - clamped
 }
 
@@ -71,7 +71,7 @@ pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 
     let dot = dot_product(a, b);
     let similarity = dot / (norm_a * norm_b);
-    similarity.max(-1.0).min(1.0)
+    similarity.clamp(-1.0, 1.0)
 }
 
 #[cfg(test)]

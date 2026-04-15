@@ -205,7 +205,7 @@ impl HnswRaBitQ {
         // so a small interval gives O(N²) total cost over batch insertion.
         if let Some(interval) = self.config.auto_snapshot_interval {
             let count = self.insert_count.fetch_add(1, AtomicOrdering::Relaxed);
-            if interval > 0 && (count + 1) % interval == 0 {
+            if interval > 0 && (count + 1).is_multiple_of(interval) {
                 self.hnsw.publish_snapshot();
             }
         }
@@ -605,7 +605,7 @@ impl HnswRaBitQ {
             // RaBitQ estimation drift.  If the true distance is significantly
             // different, push the corrected distance back into candidates
             // so the beam steers toward the correct region.
-            if expansions % CHECKPOINT_INTERVAL == 0 {
+            if expansions.is_multiple_of(CHECKPOINT_INTERVAL) {
                 if let Some(vec) = self.hnsw.get_vector(&curr_id) {
                     let true_dist = self.hnsw.compute_dist(query_vec, &vec);
                     float_verified.insert(curr_id);

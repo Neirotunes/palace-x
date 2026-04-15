@@ -112,7 +112,7 @@ pub unsafe fn sphere_frustum_cull_neon(
         let res_u32 = vcgtq_f32(signed_dist, zero);
 
         if vgetq_lane_u32::<0>(res_u32) != 0 {
-            visible_mask |= 1 << (idx + 0);
+            visible_mask |= 1 << idx;
         }
         if vgetq_lane_u32::<1>(res_u32) != 0 {
             visible_mask |= 1 << (idx + 1);
@@ -166,6 +166,9 @@ pub unsafe fn dot_product_neon(a: &[f32], b: &[f32]) -> f32 {
 }
 
 /// Computes the cosine distance using NEON SIMD.
+///
+/// # Safety
+/// Caller must ensure both slices have the same length.
 #[cfg(target_arch = "aarch64")]
 pub unsafe fn cosine_distance_neon(a: &[f32], b: &[f32]) -> f32 {
     let dot = dot_product_neon(a, b);
@@ -177,5 +180,5 @@ pub unsafe fn cosine_distance_neon(a: &[f32], b: &[f32]) -> f32 {
     }
 
     let similarity = dot / (norm_a * norm_b);
-    ((1.0 - similarity) / 2.0).max(0.0).min(1.0)
+    ((1.0 - similarity) / 2.0).clamp(0.0, 1.0)
 }

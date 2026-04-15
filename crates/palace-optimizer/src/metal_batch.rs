@@ -452,7 +452,7 @@ impl MetalBatchSearch {
             .fetch_add(num_candidates as u64, Ordering::Relaxed);
 
         let query_bytes = dims * std::mem::size_of::<f32>();
-        let cand_bytes = candidates.len() * std::mem::size_of::<f32>();
+        let cand_bytes = std::mem::size_of_val(candidates);
         let dist_bytes = num_candidates * std::mem::size_of::<f32>();
 
         let mut bufs = self.buffers.lock().unwrap();

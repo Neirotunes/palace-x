@@ -47,8 +47,7 @@ impl Eq for Candidate {}
 
 impl PartialOrd for Candidate {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        // Reverse ordering for min-heap (smallest distances first)
-        other.distance.partial_cmp(&self.distance)
+        Some(self.cmp(other))
     }
 }
 

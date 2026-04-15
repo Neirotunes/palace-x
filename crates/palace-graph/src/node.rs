@@ -63,7 +63,7 @@ impl GraphNode {
 /// Quantizes a float vector to binary (bitwise representation)
 /// Simple approach: for each component, if value >= 0 set bit to 1, else 0
 fn quantize_to_binary(vector: &[f32]) -> Vec<u64> {
-    let mut binary = Vec::with_capacity((vector.len() + 63) / 64);
+    let mut binary = Vec::with_capacity(vector.len().div_ceil(64));
 
     for chunk in vector.chunks(64) {
         let mut bits: u64 = 0;

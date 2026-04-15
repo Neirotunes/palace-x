@@ -57,7 +57,7 @@ impl Eq for Candidate {}
 
 impl PartialOrd for Candidate {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        other.distance.partial_cmp(&self.distance)
+        Some(self.cmp(other))
     }
 }
 impl Ord for Candidate {
@@ -82,7 +82,7 @@ impl Eq for FarCandidate {}
 
 impl PartialOrd for FarCandidate {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.distance.partial_cmp(&other.distance)
+        Some(self.cmp(other))
     }
 }
 impl Ord for FarCandidate {
@@ -230,7 +230,7 @@ impl HnswIndex {
         self.nodes.insert(id, node);
 
         // Get current entry point
-        let ep = { self.entry_point.read().clone() };
+        let ep = { *self.entry_point.read() };
 
         if let Some(ep_id) = ep {
             let ep_level = self.nodes.get(&ep_id).map(|n| n.level).unwrap_or(0);
@@ -564,7 +564,7 @@ impl HnswIndex {
         );
         let ef = ef.unwrap_or(self.ef_search.load(AtomicOrdering::Relaxed));
 
-        let ep = match self.entry_point.read().clone() {
+        let ep = match *self.entry_point.read() {
             Some(ep) => ep,
             None => return Vec::new(),
         };
@@ -585,7 +585,7 @@ impl HnswIndex {
     pub fn search_binary(&self, query_binary: &[u64], ef: Option<usize>) -> Vec<(NodeId, u32)> {
         let ef = ef.unwrap_or(self.ef_search.load(AtomicOrdering::Relaxed));
 
-        let ep = match self.entry_point.read().clone() {
+        let ep = match *self.entry_point.read() {
             Some(ep) => ep,
             None => return Vec::new(),
         };
@@ -760,7 +760,7 @@ impl HnswIndex {
 
     /// Current entry point (top-level node), or `None` if index is empty
     pub fn entry_point(&self) -> Option<NodeId> {
-        self.entry_point.read().clone()
+        *self.entry_point.read()
     }
 
     /// Level assigned to a node, or `None` if node doesn't exist
@@ -920,7 +920,7 @@ impl HnswIndex {
         self.nodes.insert(id, node);
 
         // Get global entry point (must exist — bootstrap guarantees it)
-        let ep_id = match self.entry_point.read().clone() {
+        let ep_id = match *self.entry_point.read() {
             Some(ep) => ep,
             None => return,
         };
@@ -1099,7 +1099,7 @@ impl HnswIndex {
         let work = &prepared[start_idx..];
         let num_threads = rayon::current_num_threads().max(1);
         // Chunk size balances rayon overhead vs warm-start chain length
-        let chunk_size = (work.len() / num_threads).max(256).min(8192);
+        let chunk_size = (work.len() / num_threads).clamp(256, 8192);
         let progress = AtomicUsize::new(start_idx);
         let graph_size_before = self.nodes.len();
 
@@ -1142,7 +1142,7 @@ impl HnswIndex {
 
                 // Progressive snapshot + progress
                 let count = progress.fetch_add(1, AtomicOrdering::Relaxed);
-                if count > 0 && count % 10_000 == 0 {
+                if count > 0 && count.is_multiple_of(10_000) {
                     self.publish_snapshot();
                     eprint!("\r  [warp] {}/{}", count, total);
                 }
@@ -1232,7 +1232,7 @@ impl HnswIndex {
 
 /// Binary quantization (LSB-first convention)
 fn quantize_binary(vector: &[f32]) -> Vec<u64> {
-    let num_words = (vector.len() + 63) / 64;
+    let num_words = vector.len().div_ceil(64);
     let mut result = vec![0u64; num_words];
     for (i, &value) in vector.iter().enumerate() {
         if value > 0.0 {

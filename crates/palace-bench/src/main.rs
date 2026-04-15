@@ -303,7 +303,7 @@ fn bench_sift(limit: Option<usize>) {
     let nsw_l2_alpha = NswIndex::with_l2(dims, 32, 200); // same but for second test
 
     let mut rq_index = palace_quant::rabitq::RaBitQIndex::new(dims, 42);
-    rq_index.update_centroid(&base_vectors.to_vec());
+    rq_index.update_centroid(base_vectors);
 
     let mut codes_1bit = Vec::new();
     let mut codes_4bit = Vec::new();
@@ -330,7 +330,7 @@ fn bench_sift(limit: Option<usize>) {
     println!("\n| Method | Recall@1 | Recall@10 | QPS | Memory/Vec |");
     println!("|--------|----------|-----------|-----|------------|");
 
-    let mut run_bench = |name: &str, f: &dyn Fn(&[f32]) -> Vec<usize>, mem: &str| {
+    let run_bench = |name: &str, f: &dyn Fn(&[f32]) -> Vec<usize>, mem: &str| {
         let start = Instant::now();
         let mut recall_1 = 0.0;
         let mut recall_10 = 0.0;
@@ -1440,7 +1440,7 @@ fn verify_claim_2_bandwidth_savings(dims: usize) {
     let full_f32_bytes = dims * 4; // raw f32 vector
 
     // Bit-plane sizes
-    let bytes_per_plane = (dims + 7) / 8;
+    let bytes_per_plane = dims.div_ceil(8);
     let sign_bytes = bytes_per_plane; // 1 plane
     let exponent_bytes = bytes_per_plane * 8; // 8 planes
     let mantissa_bytes = bytes_per_plane * 23; // 23 planes

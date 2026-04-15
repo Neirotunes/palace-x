@@ -184,7 +184,7 @@ impl MemoryProvider for MemoryPalace {
         let count = self
             .inserts_since_snapshot
             .fetch_add(1, AtomicOrdering::Relaxed);
-        if count > 0 && count % 1000 == 0 {
+        if count > 0 && count.is_multiple_of(1000) {
             self.hnsw.publish_snapshot();
         }
 
@@ -216,7 +216,7 @@ impl MemoryProvider for MemoryPalace {
         // Validate configuration
         config
             .validate()
-            .map_err(|e| MemoryError::StorageError(e))?;
+            .map_err(MemoryError::StorageError)?;
 
         // Validate query dimensions
         if query.len() != self.dimensions {

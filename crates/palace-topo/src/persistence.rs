@@ -52,6 +52,12 @@ pub struct PersistenceDiagram {
     pub pairs: Vec<PersistencePair>,
 }
 
+impl Default for PersistenceDiagram {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PersistenceDiagram {
     pub fn new() -> Self {
         Self { pairs: Vec::new() }
@@ -370,10 +376,12 @@ mod tests {
     use super::*;
     use std::collections::HashMap as StdHashMap;
 
+    #[allow(dead_code)]
     struct TestGraph {
         adjacency: StdHashMap<NodeId, Vec<NodeId>>,
     }
 
+    #[allow(dead_code)]
     impl TestGraph {
         fn new() -> Self {
             Self {

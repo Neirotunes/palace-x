@@ -84,7 +84,7 @@ impl TopologicalReranker {
         let mut scored: Vec<(Fragment, f32)> = candidates
             .par_iter()
             .map(|candidate| {
-                let ego = EgoGraph::build_single(candidate.node_id, 1, |node| neighbors_fn(node))
+                let ego = EgoGraph::build_single(candidate.node_id, 1, &neighbors_fn)
                     .with_cap(500);
                 let distance = d_total(candidate.cosine_dist, &ego, self.alpha, self.beta);
                 (candidate.clone(), distance)
@@ -119,7 +119,7 @@ impl TopologicalReranker {
                     Some(cached) => cached,
                     None => {
                         let built =
-                            EgoGraph::build_single(candidate.node_id, 1, |node| neighbors_fn(node))
+                            EgoGraph::build_single(candidate.node_id, 1, &neighbors_fn)
                                 .with_cap(500);
                         cache.put(candidate.node_id, built.clone());
                         built
@@ -146,7 +146,7 @@ impl TopologicalReranker {
         let mut scored: Vec<(Fragment, f32)> = candidates
             .iter()
             .map(|candidate| {
-                let ego = EgoGraph::build_single(candidate.node_id, 1, |node| neighbors_fn(node))
+                let ego = EgoGraph::build_single(candidate.node_id, 1, &neighbors_fn)
                     .with_cap(500);
                 let distance = d_total(candidate.cosine_dist, &ego, self.alpha, self.beta);
                 (candidate.clone(), distance)

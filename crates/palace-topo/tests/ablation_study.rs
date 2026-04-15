@@ -10,7 +10,7 @@
 //! 4. Grid search: α ∈ {0.5, 0.6, 0.7, 0.8, 0.9}, β = 1-α
 
 use palace_core::NodeId;
-use palace_topo::{betti, ego_graph::EgoGraph, metric::d_total};
+use palace_topo::{ego_graph::EgoGraph, metric::d_total};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::collections::{HashMap, HashSet};
@@ -125,7 +125,7 @@ fn search_with_rerank(
     }
 
     // Stage 2: Topological reranking
-    let query_pseudo_id = NodeId(base.len() as u64); // pseudo-ID for query
+    let _query_pseudo_id = NodeId(base.len() as u64); // pseudo-ID for query
     let mut reranked: Vec<(usize, f32)> = candidates
         .iter()
         .map(|&(idx, cos_dist)| {

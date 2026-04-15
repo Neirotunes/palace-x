@@ -79,7 +79,7 @@ impl BitPlaneStore {
     /// This is fast (no disk access) and suitable for approximate search.
     pub fn get_coarse(&self, id: NodeId) -> Option<Vec<f32>> {
         self.coarse_planes.get(&id).map(|coarse| {
-            let _bytes_per_plane = (self.dimensions + 7) / 8;
+            let _bytes_per_plane = self.dimensions.div_ceil(8);
             let mut result = Vec::with_capacity(self.dimensions);
 
             for dim in 0..self.dimensions {
@@ -162,7 +162,7 @@ impl BitPlaneStore {
 
     /// Calculate RAM footprint (coarse planes only).
     pub fn memory_usage_bytes(&self) -> usize {
-        let bytes_per_plane = (self.dimensions + 7) / 8;
+        let bytes_per_plane = self.dimensions.div_ceil(8);
         let coarse_per_vector = (1 + 8) * bytes_per_plane; // sign + exponent planes
         self.coarse_planes.len() * coarse_per_vector
             + self.fine_planes.len() * (23 * bytes_per_plane) // disk footprint (for accounting)
@@ -185,13 +185,13 @@ impl BitPlaneStore {
 
     /// Calculate coarse storage per vector in bytes.
     pub fn coarse_size_per_vector(&self) -> usize {
-        let bytes_per_plane = (self.dimensions + 7) / 8;
+        let bytes_per_plane = self.dimensions.div_ceil(8);
         (1 + 8) * bytes_per_plane
     }
 
     /// Calculate total storage per vector in bytes (coarse + fine).
     pub fn total_size_per_vector(&self) -> usize {
-        let bytes_per_plane = (self.dimensions + 7) / 8;
+        let bytes_per_plane = self.dimensions.div_ceil(8);
         (1 + 8 + 23) * bytes_per_plane
     }
 }

@@ -355,7 +355,7 @@ mod tests {
 
         // Should have some nodes in upper layers (statistically guaranteed with 500 nodes, M=16)
         eprintln!("Hot tier: {} nodes, {}", hot.len(), hot.memory_display());
-        assert!(hot.len() > 0, "Should have upper-layer nodes in hot tier");
+        assert!(!hot.is_empty(), "Should have upper-layer nodes in hot tier");
         assert!(hot.memory_bytes() > 0);
     }
 
@@ -416,11 +416,10 @@ mod tests {
             let prefetched = search_with_prefetch(&index, &hot, &prefetcher, &query, 32);
 
             // Top result should match (same algorithm, just different memory path)
-            if !standard.is_empty() && !prefetched.is_empty() {
-                if standard[0].0 == prefetched[0].0 {
+            if !standard.is_empty() && !prefetched.is_empty()
+                && standard[0].0 == prefetched[0].0 {
                     matches += 1;
                 }
-            }
         }
 
         let match_rate = matches as f32 / total as f32 * 100.0;

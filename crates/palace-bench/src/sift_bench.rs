@@ -7,10 +7,8 @@
 //! Palace-X quantization and search configurations.
 
 use crate::sift::{self, SiftDataset};
-use palace_core::NodeId;
 use palace_graph::{MetaData, NswIndex};
 use palace_quant::binary::quantize_binary;
-use palace_quant::cosine::cosine_distance;
 use palace_quant::hamming::hamming_distance;
 use palace_quant::rabitq::{rabitq_topk, RaBitQCode, RaBitQIndex};
 use std::path::Path;

@@ -73,9 +73,7 @@ impl EgoGraph {
 
         // Cache neighbors for 1-hop nodes
         for &node in neighbors_x.iter().chain(neighbors_y.iter()) {
-            if !vertex_neighbors.contains_key(&node) {
-                vertex_neighbors.insert(node, neighbors_fn(node));
-            }
+            vertex_neighbors.entry(node).or_insert_with(|| neighbors_fn(node));
         }
 
         // Step 3: Add 2-hop neighbors

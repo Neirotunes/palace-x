@@ -62,7 +62,7 @@ impl PalaceStats {
         // - Exponent: 8 planes, each (dimensions + 7) / 8 bytes
         // Per node: ~(dimensions / 8) + 8 * (dimensions / 8) = ~9 * dimensions / 8
 
-        let bytes_per_plane = (dimensions + 7) / 8;
+        let bytes_per_plane = dimensions.div_ceil(8);
         let coarse_bytes_per_node = bytes_per_plane + (8 * bytes_per_plane);
 
         total_nodes * coarse_bytes_per_node
