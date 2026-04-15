@@ -231,8 +231,7 @@ impl HnswRaBitQ {
                 if self.config.rabitq_bits == 1 {
                     self.quantizer.encode(vec)
                 } else {
-                    self.quantizer
-                        .encode_multibit(vec, self.config.rabitq_bits)
+                    self.quantizer.encode_multibit(vec, self.config.rabitq_bits)
                 }
             })
             .collect();
@@ -461,8 +460,7 @@ impl HnswRaBitQ {
         // Oversample: compensate for RaBitQ variance. Default was 1.0 (no-op).
         // With hybrid checkpoints 2.0 is sufficient; without them 3.0+ is needed.
         let ef_internal = ((ef as f32) * self.config.beam_oversample.max(1.5)).ceil() as usize;
-        let candidates =
-            self.beam_search_rabitq_hybrid(query, &rq, current_ep, ef_internal);
+        let candidates = self.beam_search_rabitq_hybrid(query, &rq, current_ep, ef_internal);
 
         // ── Float rerank ──
         // Default: rerank at least max(rerank_top, k*5) — ensures enough float-
@@ -620,8 +618,7 @@ impl HnswRaBitQ {
                     };
                     if ratio < 0.5 || ratio > 2.0 {
                         // Re-inject with corrected distance
-                        candidates
-                            .push(std::cmp::Reverse((OrdF32(true_dist), curr_id)));
+                        candidates.push(std::cmp::Reverse((OrdF32(true_dist), curr_id)));
                         // Also update result set if this is closer than current farthest
                         if true_dist < farthest || result.len() < ef {
                             result.push((OrdF32(true_dist), curr_id));

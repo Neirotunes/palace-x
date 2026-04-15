@@ -957,19 +957,18 @@ impl HnswIndex {
 
             // Bidirectional connections + pruning (same logic as `insert`)
             for &neighbor_id in &selected {
-                let needs_prune =
-                    if let Some(mut nr) = self.nodes.get_mut(&neighbor_id) {
-                        if lc < nr.neighbors.len() {
-                            if !nr.neighbors[lc].contains(&id) {
-                                nr.neighbors[lc].push(id);
-                            }
-                            nr.neighbors[lc].len() > max_m
-                        } else {
-                            false
+                let needs_prune = if let Some(mut nr) = self.nodes.get_mut(&neighbor_id) {
+                    if lc < nr.neighbors.len() {
+                        if !nr.neighbors[lc].contains(&id) {
+                            nr.neighbors[lc].push(id);
                         }
+                        nr.neighbors[lc].len() > max_m
                     } else {
                         false
-                    };
+                    }
+                } else {
+                    false
+                };
                 // DashMap ref dropped — safe to read other nodes
 
                 if needs_prune {
@@ -985,8 +984,7 @@ impl HnswIndex {
                                 .map(|n| (nid, self.dist(&nv, &n.vector)))
                         })
                         .collect();
-                    let pruned =
-                        self.select_neighbors_heuristic(&nv, &nb_list, max_m, lc);
+                    let pruned = self.select_neighbors_heuristic(&nv, &nb_list, max_m, lc);
                     if let Some(mut nr) = self.nodes.get_mut(&neighbor_id) {
                         if lc < nr.neighbors.len() {
                             nr.neighbors[lc] = pruned;
@@ -1029,17 +1027,16 @@ impl HnswIndex {
     ///
     /// Returns `Vec<NodeId>` in the same order as the input vectors.
     /// Call `publish_snapshot()` is done automatically at the end.
-    pub fn par_insert_batch(
-        &self,
-        vectors: Vec<(Vec<f32>, MetaData)>,
-    ) -> Vec<NodeId> {
+    pub fn par_insert_batch(&self, vectors: Vec<(Vec<f32>, MetaData)>) -> Vec<NodeId> {
         let total = vectors.len();
         if total == 0 {
             return Vec::new();
         }
 
         // Pre-assign contiguous IDs (single atomic add — no per-insert contention)
-        let base_id = self.next_id.fetch_add(total as u64, AtomicOrdering::Relaxed);
+        let base_id = self
+            .next_id
+            .fetch_add(total as u64, AtomicOrdering::Relaxed);
 
         // ── Innovation 2: Locality-Aware Scheduling ──
         // Project every vector onto a random hyperplane; sort by projection.
@@ -1258,10 +1255,7 @@ fn l2_distance(a: &[f32], b: &[f32]) -> f32 {
     }
     #[cfg(not(target_arch = "aarch64"))]
     {
-        a.iter()
-            .zip(b.iter())
-            .map(|(x, y)| (x - y) * (x - y))
-            .sum()
+        a.iter().zip(b.iter()).map(|(x, y)| (x - y) * (x - y)).sum()
     }
 }
 
@@ -1491,11 +1485,7 @@ mod tests {
         let a = random_vector(128, 42);
         let b = random_vector(128, 99);
 
-        let scalar: f32 = a
-            .iter()
-            .zip(b.iter())
-            .map(|(x, y)| (x - y) * (x - y))
-            .sum();
+        let scalar: f32 = a.iter().zip(b.iter()).map(|(x, y)| (x - y) * (x - y)).sum();
         let simd = l2_distance(&a, &b);
 
         assert!(
@@ -1513,11 +1503,7 @@ mod tests {
         for dims in [3, 7, 17, 33, 65, 100, 127, 129, 255] {
             let a = random_vector(dims, 1);
             let b = random_vector(dims, 2);
-            let scalar: f32 = a
-                .iter()
-                .zip(b.iter())
-                .map(|(x, y)| (x - y) * (x - y))
-                .sum();
+            let scalar: f32 = a.iter().zip(b.iter()).map(|(x, y)| (x - y) * (x - y)).sum();
             let simd = l2_distance(&a, &b);
             assert!(
                 (scalar - simd).abs() < 1e-2,
@@ -1577,14 +1563,26 @@ mod tests {
         for i in 0..n as u64 {
             let v = random_vector(dims, i);
             seq_vecs.push(v.clone());
-            seq_index.insert(v, MetaData { label: format!("{}", i) });
+            seq_index.insert(
+                v,
+                MetaData {
+                    label: format!("{}", i),
+                },
+            );
         }
         seq_index.publish_snapshot();
 
         // Parallel
         let par_index = HnswIndex::new(dims, 16, 100);
         let par_vecs: Vec<(Vec<f32>, MetaData)> = (0..n as u64)
-            .map(|i| (random_vector(dims, i), MetaData { label: format!("{}", i) }))
+            .map(|i| {
+                (
+                    random_vector(dims, i),
+                    MetaData {
+                        label: format!("{}", i),
+                    },
+                )
+            })
             .collect();
         par_index.par_insert_batch(par_vecs);
 
@@ -1604,13 +1602,19 @@ mod tests {
             let gt_set: HashSet<usize> = gt.iter().take(k).map(|x| x.0).collect();
 
             let seq_results = seq_index.search(query, Some(64));
-            let seq_set: HashSet<usize> =
-                seq_results.iter().take(k).map(|x| x.0 .0 as usize).collect();
+            let seq_set: HashSet<usize> = seq_results
+                .iter()
+                .take(k)
+                .map(|x| x.0 .0 as usize)
+                .collect();
             seq_recall_sum += gt_set.intersection(&seq_set).count() as f32 / k as f32;
 
             let par_results = par_index.search(query, Some(64));
-            let par_set: HashSet<usize> =
-                par_results.iter().take(k).map(|x| x.0 .0 as usize).collect();
+            let par_set: HashSet<usize> = par_results
+                .iter()
+                .take(k)
+                .map(|x| x.0 .0 as usize)
+                .collect();
             par_recall_sum += gt_set.intersection(&par_set).count() as f32 / k as f32;
         }
 

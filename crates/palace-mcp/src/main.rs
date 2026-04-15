@@ -64,14 +64,22 @@ struct RpcError {
 
 impl Response {
     fn ok(id: Value, result: Value) -> Self {
-        Self { jsonrpc: "2.0", id, result: Some(result), error: None }
+        Self {
+            jsonrpc: "2.0",
+            id,
+            result: Some(result),
+            error: None,
+        }
     }
     fn err(id: Value, code: i64, message: impl Into<String>) -> Self {
         Self {
             jsonrpc: "2.0",
             id,
             result: None,
-            error: Some(RpcError { code, message: message.into() }),
+            error: Some(RpcError {
+                code,
+                message: message.into(),
+            }),
         }
     }
 }
@@ -215,7 +223,10 @@ async fn handle_ingest(
         metadata.extra.insert("text".to_string(), t.clone());
     }
 
-    let node_id = engine.ingest(vector, metadata).await.map_err(|e| e.to_string())?;
+    let node_id = engine
+        .ingest(vector, metadata)
+        .await
+        .map_err(|e| e.to_string())?;
 
     // Store text for retrieval
     if let Some(t) = text {
@@ -247,7 +258,10 @@ async fn handle_search(
         .min(100) as usize;
 
     let config = SearchConfig::default_with_limit(limit);
-    let fragments = engine.search(vector, config).await.map_err(|e| e.to_string())?;
+    let fragments = engine
+        .search(vector, config)
+        .await
+        .map_err(|e| e.to_string())?;
 
     let store = texts.read().await;
     let results: Vec<Value> = fragments
@@ -329,10 +343,7 @@ async fn dispatch(
         // ── Tool calls ────────────────────────────────────────────────────────
         "tools/call" => {
             let params = req.params.unwrap_or(Value::Null);
-            let tool_name = params
-                .get("name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let tool_name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
             let tool_args = params.get("arguments").cloned();
 
             debug!("tools/call name={}", tool_name);
@@ -340,7 +351,7 @@ async fn dispatch(
             let result = match tool_name {
                 "palace_ingest" => handle_ingest(&engine, &texts, dims, tool_args).await,
                 "palace_search" => handle_search(&engine, &texts, dims, tool_args).await,
-                "palace_stats"  => handle_stats(&engine, &texts).await,
+                "palace_stats" => handle_stats(&engine, &texts).await,
                 other => Err(format!("Unknown tool: {}", other)),
             };
 
@@ -397,22 +408,20 @@ async fn dispatch(
                 .unwrap_or("");
             debug!("resources/read uri={}", uri);
             match uri {
-                "palace://index/stats" => {
-                    match handle_stats(&engine, &texts).await {
-                        Ok(data) => Response::ok(
-                            id,
-                            json!({
-                                "contents": [{
-                                    "uri": uri,
-                                    "mimeType": "application/json",
-                                    "text": serde_json::to_string_pretty(&data)
-                                        .unwrap_or_else(|_| data.to_string())
-                                }]
-                            }),
-                        ),
-                        Err(msg) => Response::err(id, -32000, msg),
-                    }
-                }
+                "palace://index/stats" => match handle_stats(&engine, &texts).await {
+                    Ok(data) => Response::ok(
+                        id,
+                        json!({
+                            "contents": [{
+                                "uri": uri,
+                                "mimeType": "application/json",
+                                "text": serde_json::to_string_pretty(&data)
+                                    .unwrap_or_else(|_| data.to_string())
+                            }]
+                        }),
+                    ),
+                    Err(msg) => Response::err(id, -32000, msg),
+                },
                 other => Response::err(id, -32002, format!("Unknown resource: {}", other)),
             }
         }
@@ -436,8 +445,7 @@ async fn main() {
     tracing_subscriber::fmt()
         .with_writer(io::stderr)
         .with_env_filter(
-            std::env::var("RUST_LOG")
-                .unwrap_or_else(|_| "palace_mcp=info".to_string()),
+            std::env::var("RUST_LOG").unwrap_or_else(|_| "palace_mcp=info".to_string()),
         )
         .init();
 
@@ -474,8 +482,7 @@ async fn main() {
         };
 
         // MCP notifications must not receive a response
-        let is_notification = req.id.is_none()
-            || req.method.starts_with("notifications/");
+        let is_notification = req.id.is_none() || req.method.starts_with("notifications/");
         let resp = dispatch(Arc::clone(&engine), Arc::clone(&texts), dims, req).await;
 
         if !is_notification {

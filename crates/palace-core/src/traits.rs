@@ -82,14 +82,19 @@ mod tests {
 
     impl MockProvider {
         fn new() -> Self {
-            Self { count: AtomicU64::new(0) }
+            Self {
+                count: AtomicU64::new(0),
+            }
         }
     }
 
     impl MemoryProvider for MockProvider {
         async fn ingest(&self, vector: Vec<f32>, _meta: MetaData) -> Result<NodeId, MemoryError> {
             if vector.is_empty() {
-                return Err(MemoryError::DimensionMismatch { expected: 1, got: 0 });
+                return Err(MemoryError::DimensionMismatch {
+                    expected: 1,
+                    got: 0,
+                });
             }
             let id = self.count.fetch_add(1, Ordering::SeqCst);
             Ok(NodeId(id))
@@ -117,17 +122,32 @@ mod tests {
     async fn test_is_empty_default_impl() {
         let provider = MockProvider::new();
         // Default is_empty() is implemented in terms of len()
-        assert!(provider.is_empty().await, "freshly-created provider must be empty");
+        assert!(
+            provider.is_empty().await,
+            "freshly-created provider must be empty"
+        );
 
-        provider.ingest(vec![1.0], MetaData::new(0, "t")).await.unwrap();
-        assert!(!provider.is_empty().await, "after ingest, provider must be non-empty");
+        provider
+            .ingest(vec![1.0], MetaData::new(0, "t"))
+            .await
+            .unwrap();
+        assert!(
+            !provider.is_empty().await,
+            "after ingest, provider must be non-empty"
+        );
     }
 
     #[tokio::test]
     async fn test_ingest_returns_sequential_ids() {
         let provider = MockProvider::new();
-        let id0 = provider.ingest(vec![1.0], MetaData::new(0, "a")).await.unwrap();
-        let id1 = provider.ingest(vec![2.0], MetaData::new(0, "b")).await.unwrap();
+        let id0 = provider
+            .ingest(vec![1.0], MetaData::new(0, "a"))
+            .await
+            .unwrap();
+        let id1 = provider
+            .ingest(vec![2.0], MetaData::new(0, "b"))
+            .await
+            .unwrap();
         assert_eq!(id0.0, 0, "first id must be 0");
         assert_eq!(id1.0, 1, "second id must be 1");
     }
@@ -137,7 +157,10 @@ mod tests {
         let provider = MockProvider::new();
         let result = provider.ingest(vec![], MetaData::new(0, "bad")).await;
         assert!(result.is_err(), "empty vector must produce an error");
-        assert!(matches!(result.unwrap_err(), MemoryError::DimensionMismatch { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            MemoryError::DimensionMismatch { .. }
+        ));
     }
 
     #[tokio::test]
@@ -169,7 +192,10 @@ mod tests {
         let provider = MockProvider::new();
         assert_eq!(provider.len().await, 0);
         for i in 0..5u64 {
-            provider.ingest(vec![i as f32], MetaData::new(i, "x")).await.unwrap();
+            provider
+                .ingest(vec![i as f32], MetaData::new(i, "x"))
+                .await
+                .unwrap();
         }
         assert_eq!(provider.len().await, 5);
     }

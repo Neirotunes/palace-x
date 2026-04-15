@@ -45,10 +45,19 @@ mod tests {
 
     #[test]
     fn test_dimension_mismatch_display() {
-        let err = MemoryError::DimensionMismatch { expected: 128, got: 64 };
+        let err = MemoryError::DimensionMismatch {
+            expected: 128,
+            got: 64,
+        };
         let msg = format!("{}", err);
-        assert!(msg.contains("128"), "error message should include expected dims");
-        assert!(msg.contains("64"), "error message should include actual dims");
+        assert!(
+            msg.contains("128"),
+            "error message should include expected dims"
+        );
+        assert!(
+            msg.contains("64"),
+            "error message should include actual dims"
+        );
     }
 
     #[test]
@@ -66,7 +75,9 @@ mod tests {
 
     #[test]
     fn test_index_full_display() {
-        let err = MemoryError::IndexFull { capacity: 1_000_000 };
+        let err = MemoryError::IndexFull {
+            capacity: 1_000_000,
+        };
         assert!(format!("{}", err).contains("1000000"));
     }
 
