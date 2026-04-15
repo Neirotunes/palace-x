@@ -214,9 +214,7 @@ impl MemoryProvider for MemoryPalace {
         config: &SearchConfig,
     ) -> Result<Vec<Fragment>, MemoryError> {
         // Validate configuration
-        config
-            .validate()
-            .map_err(MemoryError::StorageError)?;
+        config.validate().map_err(MemoryError::StorageError)?;
 
         // Validate query dimensions
         if query.len() != self.dimensions {

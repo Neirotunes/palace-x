@@ -569,7 +569,9 @@ unsafe fn neon_masked_sum(bit_words: &[u64], q_ptr: *const f32, dim: usize) -> f
         if j + 4 <= word_count {
             let nibble = (bits & 0xF) as u32;
             #[allow(unused_assignments)]
-            { bits >>= 4; }
+            {
+                bits >>= 4;
+            }
             let mask = vtstq_u32(vdupq_n_u32(nibble), selector);
             let q = vld1q_f32(q_ptr.add(q_offset + j));
             acc0 = vaddq_f32(acc0, vbslq_f32(mask, q, zero));

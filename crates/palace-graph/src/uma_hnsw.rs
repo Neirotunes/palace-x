@@ -416,10 +416,9 @@ mod tests {
             let prefetched = search_with_prefetch(&index, &hot, &prefetcher, &query, 32);
 
             // Top result should match (same algorithm, just different memory path)
-            if !standard.is_empty() && !prefetched.is_empty()
-                && standard[0].0 == prefetched[0].0 {
-                    matches += 1;
-                }
+            if !standard.is_empty() && !prefetched.is_empty() && standard[0].0 == prefetched[0].0 {
+                matches += 1;
+            }
         }
 
         let match_rate = matches as f32 / total as f32 * 100.0;
