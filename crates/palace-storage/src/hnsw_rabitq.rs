@@ -616,7 +616,7 @@ impl HnswRaBitQ {
                     } else {
                         1.0
                     };
-                    if ratio < 0.5 || ratio > 2.0 {
+                    if !(0.5..=2.0).contains(&ratio) {
                         // Re-inject with corrected distance
                         candidates.push(std::cmp::Reverse((OrdF32(true_dist), curr_id)));
                         // Also update result set if this is closer than current farthest
