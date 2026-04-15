@@ -3,12 +3,12 @@
 
 //! Core MemoryProvider implementation: MemoryPalace
 //!
-//! Integrates NSW index, topological reranking, and bit-plane storage into a complete
+//! Integrates HNSW index, topological reranking, and bit-plane storage into a complete
 //! two-stage retrieval system for hierarchical memory in autonomous agents.
 
 use palace_bitplane::BitPlaneStore;
 use palace_core::{Fragment, MemoryError, MemoryProvider, MetaData, NodeId, SearchConfig};
-use palace_graph::{HnswIndex, MetaData as GraphMetaData, NswIndex};
+use palace_graph::{HnswIndex, MetaData as GraphMetaData};
 use palace_topo::ego_cache::EgoCache;
 use palace_topo::TopologicalReranker;
 use parking_lot::RwLock;
@@ -29,10 +29,8 @@ use palace_optimizer::metal_batch::{gpu_rerank, MetalBatchSearch, MetalDistanceM
 /// was vulnerable to use-after-free if the arena was reset. v0.2 uses safe
 /// `Vec<f32>` storage. UMA arena is retained for future Metal GPU zero-copy.
 pub struct MemoryPalace {
-    /// Primary index — HNSW replaces flat NSW for 99.8% R@10 (was ~1%)
+    /// Primary index — HNSW for O(log N) amortized insert + 99.8% R@10
     pub(crate) hnsw: HnswIndex,
-    /// Legacy NSW index (deprecated, kept for API compat during migration)
-    pub(crate) nsw: NswIndex,
     pub(crate) bitplane: RwLock<BitPlaneStore>,
     pub(crate) reranker: TopologicalReranker,
     pub(crate) ego_cache: EgoCache,
@@ -85,14 +83,13 @@ impl MemoryPalace {
     ) -> Self {
         Self {
             hnsw: HnswIndex::new(dimensions, max_neighbors, ef_construction),
-            nsw: NswIndex::new(dimensions, max_neighbors * 2, ef_construction),
             bitplane: RwLock::new(BitPlaneStore::new(dimensions)),
             reranker: TopologicalReranker::new(alpha, beta),
             ego_cache: EgoCache::new(10_000),
             dimensions,
             vector_store: RwLock::new(std::collections::HashMap::new()),
             metadata_store: RwLock::new(std::collections::HashMap::new()),
-            thermal: palace_optimizer::ThermalGuard::default(),
+            thermal: palace_optimizer::ThermalGuard::new(95.0),
             #[cfg(target_os = "macos")]
             metal_gpu: MetalBatchSearch::new(),
             next_id: AtomicU64::new(0),

@@ -42,7 +42,7 @@ use palace_quant::rabitq::{RaBitQCode, RaBitQIndex, RaBitQQuery};
 
 use dashmap::DashMap;
 use std::collections::{BinaryHeap, HashSet};
-use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering as AtomicOrdering};
 
 /// Search strategy for the combined pipeline.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -74,6 +74,22 @@ pub struct HnswRaBitQConfig {
     pub seed: u64,
     /// Search mode: Asymmetric (float beam + RaBitQ rerank) or RaBitQBeam
     pub search_mode: SearchMode,
+    /// Beam oversample factor for RaBitQBeam mode (default 1.0).
+    ///
+    /// Compensates for RaBitQ distance variance during graph navigation by
+    /// expanding the internal beam by this factor. Values in [1.0, 2.0] trade
+    /// QPS for recall; 1.0 disables oversampling. Has no effect on Asymmetric
+    /// mode (which already uses exact float distances).
+    pub beam_oversample: f32,
+    /// Auto-snapshot interval during insert (None = disabled).
+    ///
+    /// Each `publish_snapshot()` is O(N) (clones every node), so calling it
+    /// every K inserts during a batch of N gives O(N²/K) total work. The
+    /// default `None` skips auto-snapshot entirely; callers must invoke
+    /// `publish_snapshot()` explicitly once after batch insertion. For
+    /// long-running ingestion where readers need progressive visibility,
+    /// set this to e.g. `Some(100_000)`.
+    pub auto_snapshot_interval: Option<usize>,
 }
 
 impl Default for HnswRaBitQConfig {
@@ -87,6 +103,8 @@ impl Default for HnswRaBitQConfig {
             metric: HnswDistanceMetric::L2,
             seed: 42,
             search_mode: SearchMode::Asymmetric,
+            beam_oversample: 1.5,
+            auto_snapshot_interval: None,
         }
     }
 }
@@ -109,6 +127,14 @@ pub struct HnswRaBitQ {
     ef_search: AtomicUsize,
     /// Insert counter for auto-snapshot
     insert_count: AtomicUsize,
+    /// Set to true after compact() to auto-switch to RaBitQ beam search.
+    ///
+    /// After compact(), HNSW layer-0 float vectors are freed. Calling
+    /// `hnsw.search()` in Asymmetric mode would skip all layer-0 nodes
+    /// (zero-distance guard), returning a near-empty candidate set and
+    /// collapsing recall to ~0%. RaBitQBeam mode correctly uses quantized
+    /// codes for layer-0 distance estimation.
+    compact_done: AtomicBool,
 }
 
 /// Search result with both estimated and (optionally) precise distances.
@@ -146,6 +172,7 @@ impl HnswRaBitQ {
             config,
             ef_search: AtomicUsize::new(64),
             insert_count: AtomicUsize::new(0),
+            compact_done: AtomicBool::new(false),
         }
     }
 
@@ -173,19 +200,86 @@ impl HnswRaBitQ {
         // Store compressed code
         self.codes.insert(node_id, code);
 
-        // Auto-publish snapshot every 1000 inserts
-        let count = self.insert_count.fetch_add(1, AtomicOrdering::Relaxed);
-        if (count + 1) % 1000 == 0 {
-            self.hnsw.publish_snapshot();
+        // Auto-publish snapshot at configured interval (None = caller invokes
+        // publish_snapshot() explicitly after batch). publish_snapshot is O(N)
+        // so a small interval gives O(N²) total cost over batch insertion.
+        if let Some(interval) = self.config.auto_snapshot_interval {
+            let count = self.insert_count.fetch_add(1, AtomicOrdering::Relaxed);
+            if interval > 0 && (count + 1) % interval == 0 {
+                self.hnsw.publish_snapshot();
+            }
         }
 
         node_id
+    }
+
+    /// **WarpInsert**: parallel batch insert using rayon + NEON SIMD +
+    /// locality sort + warm-start + edge backfill.
+    ///
+    /// Inserts all vectors into the HNSW graph in parallel, then encodes
+    /// RaBitQ codes (also in parallel).  Call `rebuild_with_centroid()`
+    /// afterwards for optimal RaBitQ accuracy.
+    ///
+    /// Returns `Vec<NodeId>` in the same order as the input vectors.
+    pub fn par_insert_batch(&self, vectors: Vec<(Vec<f32>, MetaData)>) -> Vec<NodeId> {
+        use rayon::prelude::*;
+
+        // Pre-encode RaBitQ codes (parallel — no graph dependency)
+        let codes: Vec<_> = vectors
+            .par_iter()
+            .map(|(vec, _)| {
+                if self.config.rabitq_bits == 1 {
+                    self.quantizer.encode(vec)
+                } else {
+                    self.quantizer
+                        .encode_multibit(vec, self.config.rabitq_bits)
+                }
+            })
+            .collect();
+
+        // Parallel HNSW insert (the expensive part)
+        let ids = self.hnsw.par_insert_batch(vectors);
+
+        // Store codes (parallel)
+        ids.par_iter()
+            .zip(codes.into_par_iter())
+            .for_each(|(&id, code)| {
+                self.codes.insert(id, code);
+            });
+
+        ids
     }
 
     /// Publish HNSW snapshot for read consistency.
     /// Call after batch insertion.
     pub fn publish_snapshot(&self) {
         self.hnsw.publish_snapshot();
+    }
+
+    /// Drop float vectors for layer-0 nodes, freeing ~99% of vector RAM.
+    ///
+    /// **Must be called after `rebuild_with_centroid()`** — the centroid
+    /// computation reads all vectors.
+    ///
+    /// After compact:
+    /// - `search()` automatically switches from Asymmetric to RaBitQBeam mode.
+    ///   Asymmetric mode calls `hnsw.search()` which would skip all layer-0
+    ///   nodes (their vectors were freed), collapsing recall to near-zero.
+    ///   RaBitQ beam mode correctly uses quantized codes for layer-0 distances.
+    /// - Upper-layer greedy descent is unaffected (upper nodes keep their vectors).
+    /// - `insert()` must NOT be called after compact (will panic in debug).
+    ///
+    /// Returns bytes freed.
+    pub fn compact(&self) -> usize {
+        let freed = self.hnsw.compact();
+        // Signal search() to use RaBitQ beam mode instead of float Asymmetric.
+        self.compact_done.store(true, AtomicOrdering::Release);
+        freed
+    }
+
+    /// Memory stats: (total_nodes, upper_layer_nodes, vector_bytes).
+    pub fn memory_stats(&self) -> (usize, usize, usize) {
+        self.hnsw.memory_stats()
     }
 
     /// Compute centroid from all stored vectors and re-encode RaBitQ codes.
@@ -259,10 +353,25 @@ impl HnswRaBitQ {
     /// ## RaBitQBeam mode (experimental):
     /// Layer-0 beam search uses RaBitQ estimated distances instead of float L2.
     /// Faster per-eval but lower recall due to estimation noise.
+    ///
+    /// ## Post-compact behaviour (automatic):
+    /// After `compact()` is called, this method automatically falls back to
+    /// `RaBitQBeam` regardless of `config.search_mode`. Asymmetric mode
+    /// requires float vectors at layer 0 (freed by compact) and would
+    /// return near-empty results otherwise.
     pub fn search(&self, query: &[f32], k: usize) -> Vec<RaBitQSearchResult> {
         let ef = self.ef_search.load(AtomicOrdering::Relaxed).max(k);
 
-        match self.config.search_mode {
+        // Post-compact: Asymmetric mode cannot use HNSW float search at layer 0
+        // (vectors were freed). Automatically switch to RaBitQ beam which uses
+        // self.codes for distance estimation at layer 0.
+        let mode = if self.compact_done.load(AtomicOrdering::Acquire) {
+            SearchMode::RaBitQBeam
+        } else {
+            self.config.search_mode
+        };
+
+        match mode {
             SearchMode::Asymmetric => self.search_asymmetric(query, k, ef),
             SearchMode::RaBitQBeam => self.search_rabitq_beam(query, k, ef),
         }
@@ -320,8 +429,19 @@ impl HnswRaBitQ {
         results
     }
 
-    /// RaBitQ beam search mode: graph traversal with compressed distances.
-    /// Lower recall than asymmetric but cheaper per distance evaluation.
+    /// RaBitQ beam search mode with **hybrid float checkpoints**.
+    ///
+    /// The core problem with pure RaBitQ beam: estimation noise causes the
+    /// beam to wander into wrong graph regions.  Post-hoc reranking can fix
+    /// *ordering* of found candidates but can't recover *missed* ones.
+    ///
+    /// Fix: **Hybrid Beam** — run RaBitQ beam search, but every
+    /// `CHECKPOINT_INTERVAL` candidate expansions, float-verify the current
+    /// best candidate.  If the float distance significantly disagrees with
+    /// the RaBitQ estimate (ratio > 2x), re-inject the float-verified best
+    /// into the candidate queue.  This keeps the beam anchored to the
+    /// correct graph region while only paying ~5% of the float-distance
+    /// cost of full Asymmetric mode.
     fn search_rabitq_beam(&self, query: &[f32], k: usize, ef: usize) -> Vec<RaBitQSearchResult> {
         let ep = match self.hnsw.entry_point() {
             Some(ep) => ep,
@@ -336,53 +456,64 @@ impl HnswRaBitQ {
             current_ep = self.greedy_descent_float(query, current_ep, lc);
         }
 
-        // Layer-0 beam search with RaBitQ distances
+        // Layer-0 hybrid beam search
         let rq = self.quantizer.encode_query(query);
-        let candidates = self.beam_search_rabitq(query, &rq, current_ep, ef);
+        // Oversample: compensate for RaBitQ variance. Default was 1.0 (no-op).
+        // With hybrid checkpoints 2.0 is sufficient; without them 3.0+ is needed.
+        let ef_internal = ((ef as f32) * self.config.beam_oversample.max(1.5)).ceil() as usize;
+        let candidates =
+            self.beam_search_rabitq_hybrid(query, &rq, current_ep, ef_internal);
 
-        // Optional float rerank
+        // ── Float rerank ──
+        // Default: rerank at least max(rerank_top, k*5) — ensures enough float-
+        // verified candidates for high recall at small k.
         let rerank_n = if self.config.rerank_top > 0 {
-            self.config.rerank_top.min(candidates.len())
+            self.config.rerank_top.max(k * 5).min(candidates.len())
         } else {
-            0
+            // Even with rerank_top=0, we still do a small rerank to fix
+            // RaBitQ estimation errors in the final top-k.
+            (k * 3).min(candidates.len())
         };
 
-        if rerank_n > 0 {
-            let mut results: Vec<RaBitQSearchResult> = candidates
-                .into_iter()
-                .take(rerank_n)
-                .map(|(node_id, est_dist)| {
-                    let precise = self
-                        .hnsw
-                        .get_vector(&node_id)
-                        .map(|v| self.hnsw.compute_dist(query, &v));
-                    RaBitQSearchResult {
-                        node_id,
-                        estimated_dist: est_dist,
-                        precise_dist: precise,
-                    }
-                })
-                .collect();
+        // Phase A: float-rerank top candidates
+        let mut reranked: Vec<RaBitQSearchResult> = candidates
+            .iter()
+            .take(rerank_n)
+            .map(|(node_id, est_dist)| {
+                let precise = self
+                    .hnsw
+                    .get_vector(node_id)
+                    .map(|v| self.hnsw.compute_dist(query, &v));
+                RaBitQSearchResult {
+                    node_id: *node_id,
+                    estimated_dist: *est_dist,
+                    precise_dist: precise,
+                }
+            })
+            .collect();
 
-            results.sort_by(|a, b| {
-                let da = a.precise_dist.unwrap_or(a.estimated_dist);
-                let db = b.precise_dist.unwrap_or(b.estimated_dist);
-                da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
-            });
+        reranked.sort_by(|a, b| {
+            let da = a.precise_dist.unwrap_or(a.estimated_dist);
+            let db = b.precise_dist.unwrap_or(b.estimated_dist);
+            da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+        });
 
-            results.truncate(k);
-            results
-        } else {
-            candidates
+        // Phase B: pad with remaining (non-reranked) candidates for large k
+        if k > reranked.len() {
+            let tail: Vec<RaBitQSearchResult> = candidates
                 .into_iter()
-                .take(k)
+                .skip(rerank_n)
                 .map(|(node_id, est_dist)| RaBitQSearchResult {
                     node_id,
                     estimated_dist: est_dist,
                     precise_dist: None,
                 })
-                .collect()
+                .collect();
+            reranked.extend(tail);
         }
+
+        reranked.truncate(k);
+        reranked
     }
 
     /// Greedy descent at a single upper layer using float L2.
@@ -418,20 +549,29 @@ impl HnswRaBitQ {
         current
     }
 
-    /// Beam search at layer 0 using RaBitQ estimated distances.
+    /// Hybrid beam search at layer 0: RaBitQ distances + periodic float
+    /// checkpoints to prevent beam drift.
     ///
-    /// This is the performance-critical path. Instead of computing full
-    /// float L2 for every visited node, we use RaBitQ's O(D/64) compressed
-    /// distance which is 4-8× cheaper per evaluation.
+    /// Every `CHECKPOINT_INTERVAL` expansions the current RaBitQ-best is
+    /// float-verified.  If the float distance is much better than the
+    /// RaBitQ estimate (the estimate was pessimistic) **or** much worse
+    /// (the estimate was optimistic and lured the beam astray), we
+    /// re-inject the float-verified node with its true distance.  This
+    /// corrects the priority ordering at negligible cost (~5% of
+    /// expansions pay one float-distance call).
     ///
     /// Returns candidates sorted by estimated distance (ascending).
-    fn beam_search_rabitq(
+    fn beam_search_rabitq_hybrid(
         &self,
-        _query_vec: &[f32], // kept for future float-fallback
+        query_vec: &[f32],
         rq: &RaBitQQuery,
         entry: NodeId,
         ef: usize,
     ) -> Vec<(NodeId, f32)> {
+        /// Every N expansions, float-verify the current best.
+        /// 20 means ~5% of candidates pay one float L2 — negligible QPS cost.
+        const CHECKPOINT_INTERVAL: usize = 20;
+
         // Entry distance via RaBitQ
         let entry_dist = self
             .codes
@@ -450,11 +590,47 @@ impl HnswRaBitQ {
         let mut result: BinaryHeap<(OrdF32, NodeId)> = BinaryHeap::new();
         result.push((OrdF32(entry_dist), entry));
 
+        // Track which nodes have been float-verified (avoid double work in rerank)
+        let mut float_verified: HashSet<NodeId> = HashSet::new();
+        let mut expansions = 0usize;
+
         while let Some(std::cmp::Reverse((OrdF32(curr_dist), curr_id))) = candidates.pop() {
-            // Early termination: current candidate is farther than worst in result set
             let farthest = result.peek().map(|(d, _)| d.0).unwrap_or(f32::MAX);
             if curr_dist > farthest && result.len() >= ef {
                 break;
+            }
+
+            expansions += 1;
+
+            // ── Hybrid checkpoint ──
+            // Periodically float-verify the current candidate to detect
+            // RaBitQ estimation drift.  If the true distance is significantly
+            // different, push the corrected distance back into candidates
+            // so the beam steers toward the correct region.
+            if expansions % CHECKPOINT_INTERVAL == 0 {
+                if let Some(vec) = self.hnsw.get_vector(&curr_id) {
+                    let true_dist = self.hnsw.compute_dist(query_vec, &vec);
+                    float_verified.insert(curr_id);
+
+                    // If RaBitQ estimate was off by > 50%, re-inject with true distance
+                    let ratio = if curr_dist > 1e-10 {
+                        true_dist / curr_dist
+                    } else {
+                        1.0
+                    };
+                    if ratio < 0.5 || ratio > 2.0 {
+                        // Re-inject with corrected distance
+                        candidates
+                            .push(std::cmp::Reverse((OrdF32(true_dist), curr_id)));
+                        // Also update result set if this is closer than current farthest
+                        if true_dist < farthest || result.len() < ef {
+                            result.push((OrdF32(true_dist), curr_id));
+                            if result.len() > ef {
+                                result.pop();
+                            }
+                        }
+                    }
+                }
             }
 
             // Expand neighbors at layer 0

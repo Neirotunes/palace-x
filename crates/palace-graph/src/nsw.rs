@@ -240,6 +240,11 @@ impl NswIndex {
     }
 
     /// Multi-start beam search during insertion — uses snapshot for consistency.
+    ///
+    /// NOTE: `insert()` uses the live `search()` path for better freshness.
+    /// This snapshot-based variant is kept as a reference for future work on
+    /// wait-free insertion pipelines (e.g., WarpInsert parallel construction).
+    #[allow(dead_code)]
     fn search_for_insertion_internal(
         &self,
         query_node: &GraphNode,

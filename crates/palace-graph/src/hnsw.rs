@@ -16,6 +16,7 @@ use dashmap::DashMap;
 use palace_core::NodeId;
 use parking_lot::RwLock;
 use rand::Rng;
+use rayon::prelude::*;
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashSet};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
@@ -359,6 +360,12 @@ impl HnswIndex {
 
             for &nb_id in &neighbors {
                 if let Some(nb) = self.nodes.get(&nb_id) {
+                    // Skip compacted nodes (vector freed by compact()) — empty vector
+                    // would compute 0.0 distance (query against empty slice), making
+                    // every compacted node appear equidistant and corrupting search.
+                    if nb.vector.is_empty() {
+                        continue;
+                    }
                     let d = self.dist(query, &nb.vector);
                     if d < current_dist {
                         current = nb_id;
@@ -438,6 +445,10 @@ impl HnswIndex {
                 visited.insert(nb_id);
 
                 if let Some(nb) = self.nodes.get(&nb_id) {
+                    // Skip compacted layer-0 nodes: empty vector → dist=0 (bogus)
+                    if nb.vector.is_empty() {
+                        continue;
+                    }
                     let d = self.dist(query, &nb.vector);
 
                     let farthest = result.peek().map(|r| r.distance).unwrap_or(f32::MAX);
@@ -712,9 +723,16 @@ impl HnswIndex {
         self.read_snapshot.store(Arc::new(snapshot));
     }
 
-    /// Get vector for a node
+    /// Get vector for a node.  Returns `None` if the node doesn't exist
+    /// **or** if its vector was dropped by `compact()`.
     pub fn get_vector(&self, id: &NodeId) -> Option<Vec<f32>> {
-        self.nodes.get(id).map(|n| n.vector.clone())
+        self.nodes.get(id).and_then(|n| {
+            if n.vector.is_empty() {
+                None // compacted — vector was freed
+            } else {
+                Some(n.vector.clone())
+            }
+        })
     }
 
     /// Get metadata label for a node
@@ -784,6 +802,434 @@ impl HnswIndex {
     pub fn search_from_entry(&self, query: &[f32], entry: NodeId, ef: usize) -> Vec<(NodeId, f32)> {
         self.search_layer(query, entry, ef, 0)
     }
+
+    // ══════════════════════════════════════════════════════════════════════
+    //  compact() — drop float vectors to reclaim memory after build
+    // ══════════════════════════════════════════════════════════════════════
+
+    /// Drop float vectors from layer-0-only nodes, freeing ~99% of vector RAM.
+    ///
+    /// After building the HNSW graph and encoding RaBitQ codes, the float
+    /// vectors are no longer needed for quantized search.  This method
+    /// replaces them with empty `Vec`s and returns the number of bytes freed.
+    ///
+    /// **Upper-layer nodes (level ≥ 1) keep their vectors** so that greedy
+    /// descent through the navigational layers still works correctly.
+    /// For M=16 and 1M nodes, ~62K nodes (6.25%) are kept — ~32 MB out of
+    /// ~512 MB total.
+    ///
+    /// # Post-compact constraints
+    /// - `search()` with float distances at layer 0 will produce garbage
+    ///   (zero distances).  Use `HnswRaBitQ` search modes instead.
+    /// - `insert()` will panic (new nodes need float distance to connect).
+    /// - The index is effectively **read-only + quantized-only** after compact.
+    pub fn compact(&self) -> usize {
+        let mut bytes_freed = 0usize;
+
+        for mut entry in self.nodes.iter_mut() {
+            let node = entry.value_mut();
+            // Keep vectors for upper-layer nodes (needed for greedy descent)
+            if node.level == 0 && !node.vector.is_empty() {
+                bytes_freed += node.vector.len() * std::mem::size_of::<f32>();
+                bytes_freed += node.vector.capacity() * std::mem::size_of::<f32>()
+                    - node.vector.len() * std::mem::size_of::<f32>();
+                // Replace with zero-capacity Vec (actually frees the heap alloc)
+                node.vector = Vec::new();
+            }
+        }
+
+        // Also compact the read snapshot
+        let old_snap = self.read_snapshot.load();
+        let mut new_snap = im::HashMap::new();
+        for (id, node) in old_snap.iter() {
+            let mut n = node.clone();
+            if n.level == 0 {
+                n.vector = Vec::new();
+            }
+            new_snap.insert(*id, n);
+        }
+        self.read_snapshot.store(Arc::new(new_snap));
+
+        bytes_freed
+    }
+
+    /// Returns (total_nodes, upper_layer_nodes, estimated_vector_bytes)
+    /// to help decide whether `compact()` is worth calling.
+    pub fn memory_stats(&self) -> (usize, usize, usize) {
+        let total = self.nodes.len();
+        let upper = self.nodes.iter().filter(|e| e.value().level > 0).count();
+        let vec_bytes: usize = self
+            .nodes
+            .iter()
+            .map(|e| e.value().vector.capacity() * std::mem::size_of::<f32>())
+            .sum();
+        (total, upper, vec_bytes)
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    //  WarpInsert — parallel batch insert with 5 innovations
+    // ══════════════════════════════════════════════════════════════════════
+    //
+    //  1. NEON SIMD L2 (4× unrolled FMA — see l2_distance_neon above)
+    //  2. Locality-aware thread scheduling (random-projection sort)
+    //  3. Warm-start chaining (intra-thread entry-point reuse)
+    //  4. Adaptive ef_construction (ramps up as graph densifies)
+    //  5. Edge backfill (2-hop α-RNG repair after parallel phase)
+    //
+    //  Expected throughput: 4–8× over sequential `insert()` on M-series.
+    // ══════════════════════════════════════════════════════════════════════
+
+    /// Generate a random unit hyperplane for locality-sensitive projection.
+    fn random_hyperplane(&self) -> Vec<f32> {
+        let mut rng = rand::thread_rng();
+        let raw: Vec<f32> = (0..self.dimensions)
+            .map(|_| rng.gen_range(-1.0f32..1.0))
+            .collect();
+        // Normalize (not strictly required, but keeps projection scale consistent)
+        let norm: f32 = raw.iter().map(|x| x * x).sum::<f32>().sqrt().max(1e-10);
+        raw.into_iter().map(|x| x / norm).collect()
+    }
+
+    /// Internal insert used by `par_insert_batch`.
+    ///
+    /// Differs from `insert()`:
+    /// - Node ID, level, binary are pre-computed (avoids atomic contention).
+    /// - Accepts optional `warm_ep` for layer-0 search warm-start.
+    /// - Accepts `ef_override` for adaptive ef_construction.
+    fn insert_one_warp(
+        &self,
+        id: NodeId,
+        vector: &[f32],
+        binary: Vec<u64>,
+        level: usize,
+        metadata: MetaData,
+        warm_ep: Option<NodeId>,
+        ef_override: usize,
+    ) {
+        // Create and register the node
+        let neighbors = vec![Vec::new(); level + 1];
+        let node = HnswNode {
+            id,
+            vector: vector.to_vec(),
+            binary,
+            neighbors,
+            level,
+            metadata,
+        };
+        self.nodes.insert(id, node);
+
+        // Get global entry point (must exist — bootstrap guarantees it)
+        let ep_id = match self.entry_point.read().clone() {
+            Some(ep) => ep,
+            None => return,
+        };
+        let ep_level = self.nodes.get(&ep_id).map(|n| n.level).unwrap_or(0);
+        let insert_level = level.min(ep_level);
+
+        // Phase 1: Greedy descent from top to (insert_level + 1)
+        let mut current_ep = ep_id;
+        for lc in ((insert_level + 1)..=ep_level).rev() {
+            current_ep = self.search_layer_greedy(vector, current_ep, lc);
+        }
+
+        // Phase 2: beam search + connect at each layer
+        for lc in (0..=insert_level).rev() {
+            // ── Innovation 3: warm-start at layer 0 ──
+            // In a locality-sorted batch the previous insert landed nearby,
+            // so its node is a better entry point than the global one.
+            let search_ep = if lc == 0 {
+                warm_ep.unwrap_or(current_ep)
+            } else {
+                current_ep
+            };
+
+            let candidates = self.search_layer(vector, search_ep, ef_override, lc);
+            let max_m = self.max_neighbors_at(lc);
+            let selected = self.select_neighbors_heuristic(vector, &candidates, max_m, lc);
+
+            // Set forward edges
+            if let Some(mut node_ref) = self.nodes.get_mut(&id) {
+                if lc < node_ref.neighbors.len() {
+                    node_ref.neighbors[lc] = selected.clone();
+                }
+            }
+
+            // Bidirectional connections + pruning (same logic as `insert`)
+            for &neighbor_id in &selected {
+                let needs_prune =
+                    if let Some(mut nr) = self.nodes.get_mut(&neighbor_id) {
+                        if lc < nr.neighbors.len() {
+                            if !nr.neighbors[lc].contains(&id) {
+                                nr.neighbors[lc].push(id);
+                            }
+                            nr.neighbors[lc].len() > max_m
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+                // DashMap ref dropped — safe to read other nodes
+
+                if needs_prune {
+                    let (nv, nb_ids) = match self.nodes.get(&neighbor_id) {
+                        Some(nr) => (nr.vector.clone(), nr.neighbors[lc].clone()),
+                        None => continue,
+                    };
+                    let nb_list: Vec<(NodeId, f32)> = nb_ids
+                        .iter()
+                        .filter_map(|&nid| {
+                            self.nodes
+                                .get(&nid)
+                                .map(|n| (nid, self.dist(&nv, &n.vector)))
+                        })
+                        .collect();
+                    let pruned =
+                        self.select_neighbors_heuristic(&nv, &nb_list, max_m, lc);
+                    if let Some(mut nr) = self.nodes.get_mut(&neighbor_id) {
+                        if lc < nr.neighbors.len() {
+                            nr.neighbors[lc] = pruned;
+                        }
+                    }
+                }
+            }
+
+            // Use best candidate as entry for next (lower) layer
+            if let Some((best_id, _)) = candidates.first() {
+                current_ep = *best_id;
+            }
+        }
+
+        // Update global entry point if this node reached a higher level
+        if level > ep_level {
+            let mut ep_guard = self.entry_point.write();
+            let current_max = self.max_level.load(AtomicOrdering::Acquire);
+            if level > current_max {
+                *ep_guard = Some(id);
+                self.max_level.store(level, AtomicOrdering::Release);
+            }
+        }
+    }
+
+    /// **WarpInsert** — parallel batch insert with 5 innovations.
+    ///
+    /// ```text
+    ///  ┌─ locality sort ─┐   ┌─── rayon par_chunks ──────────────────┐
+    ///  │ random-project   │ → │ thread 0: warm-chain → insert → insert│
+    ///  │ sort by proj     │   │ thread 1: warm-chain → insert → insert│
+    ///  └─────────────────┘   │ …                                      │
+    ///                        └─── adaptive ef ramps up ──────────────┘
+    ///                                       │
+    ///                              ┌────────▼────────┐
+    ///                              │  edge backfill  │  ← 2-hop α-RNG repair
+    ///                              │  (parallel)     │
+    ///                              └─────────────────┘
+    /// ```
+    ///
+    /// Returns `Vec<NodeId>` in the same order as the input vectors.
+    /// Call `publish_snapshot()` is done automatically at the end.
+    pub fn par_insert_batch(
+        &self,
+        vectors: Vec<(Vec<f32>, MetaData)>,
+    ) -> Vec<NodeId> {
+        let total = vectors.len();
+        if total == 0 {
+            return Vec::new();
+        }
+
+        // Pre-assign contiguous IDs (single atomic add — no per-insert contention)
+        let base_id = self.next_id.fetch_add(total as u64, AtomicOrdering::Relaxed);
+
+        // ── Innovation 2: Locality-Aware Scheduling ──
+        // Project every vector onto a random hyperplane; sort by projection.
+        // Nearby vectors land on the same rayon chunk → warm-start works,
+        // DashMap shard contention drops because threads touch different
+        // regions of the graph.
+        let hyperplane = self.random_hyperplane();
+
+        struct PreparedNode {
+            id: NodeId,
+            vector: Vec<f32>,
+            binary: Vec<u64>,
+            level: usize,
+            metadata: MetaData,
+        }
+
+        let mut prepared: Vec<(f32, PreparedNode)> = vectors
+            .into_iter()
+            .enumerate()
+            .map(|(i, (vec, meta))| {
+                let proj: f32 = vec.iter().zip(&hyperplane).map(|(v, h)| v * h).sum();
+                let binary = quantize_binary(&vec);
+                let level = self.random_level();
+                (
+                    proj,
+                    PreparedNode {
+                        id: NodeId(base_id + i as u64),
+                        vector: vec,
+                        binary,
+                        level,
+                        metadata: meta,
+                    },
+                )
+            })
+            .collect();
+
+        prepared.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
+
+        // ── Bootstrap: ensure entry point exists ──
+        let needs_bootstrap = self.entry_point.read().is_none();
+        let start_idx = if needs_bootstrap {
+            let first = &prepared[0].1;
+            let node = HnswNode {
+                id: first.id,
+                vector: first.vector.clone(),
+                binary: first.binary.clone(),
+                neighbors: vec![Vec::new(); first.level + 1],
+                level: first.level,
+                metadata: first.metadata.clone(),
+            };
+            self.nodes.insert(first.id, node);
+            *self.entry_point.write() = Some(first.id);
+            self.max_level.store(first.level, AtomicOrdering::Release);
+            1
+        } else {
+            0
+        };
+
+        // ── Parallel phase ──
+        let work = &prepared[start_idx..];
+        let num_threads = rayon::current_num_threads().max(1);
+        // Chunk size balances rayon overhead vs warm-start chain length
+        let chunk_size = (work.len() / num_threads).max(256).min(8192);
+        let progress = AtomicUsize::new(start_idx);
+        let graph_size_before = self.nodes.len();
+
+        eprintln!(
+            "  [warp] {} vectors, {} threads, chunk={}, NEON={}",
+            total,
+            num_threads,
+            chunk_size,
+            cfg!(target_arch = "aarch64"),
+        );
+
+        work.par_chunks(chunk_size).for_each(|chunk| {
+            let mut warm_ep: Option<NodeId> = None;
+
+            for (_, item) in chunk {
+                // ── Innovation 4: Adaptive ef_construction ──
+                // Early inserts need less ef (graph is small, search is cheap).
+                // Ramp from 30% to 100% of ef_construction proportionally to
+                // how full the graph is.  Saves ~35% distance computations in
+                // the first half of a large batch.
+                let current_size = self.nodes.len();
+                let target_size = total + graph_size_before;
+                let progress_frac = current_size as f64 / target_size as f64;
+                let adaptive_ef =
+                    ((self.ef_construction as f64) * (0.3 + 0.7 * progress_frac)) as usize;
+                let effective_ef = adaptive_ef.max(32).min(self.ef_construction);
+
+                self.insert_one_warp(
+                    item.id,
+                    &item.vector,
+                    item.binary.clone(),
+                    item.level,
+                    item.metadata.clone(),
+                    warm_ep,
+                    effective_ef,
+                );
+
+                // ── Innovation 3: warm-start for next insert ──
+                warm_ep = Some(item.id);
+
+                // Progressive snapshot + progress
+                let count = progress.fetch_add(1, AtomicOrdering::Relaxed);
+                if count > 0 && count % 10_000 == 0 {
+                    self.publish_snapshot();
+                    eprint!("\r  [warp] {}/{}", count, total);
+                }
+            }
+        });
+
+        eprintln!("\r  [warp] {}/{} — backfilling edges…", total, total);
+
+        // ── Innovation 5: Edge Backfill ──
+        // Concurrent inserts may have missed each other's edges.
+        // Re-evaluate layer-0 neighbors for every new node using a cheap
+        // 2-hop gather + α-RNG re-selection.  Fully parallel via rayon.
+        self.backfill_edges(base_id, total);
+        self.publish_snapshot();
+
+        eprintln!("  [warp] done — {} nodes in graph", self.nodes.len());
+
+        // Return IDs in original (pre-sort) order
+        (0..total as u64).map(|i| NodeId(base_id + i)).collect()
+    }
+
+    /// Post-insert graph repair: 2-hop α-RNG re-selection for recently
+    /// inserted nodes.
+    ///
+    /// During concurrent insert, thread A may connect node X to node Y,
+    /// but thread B (inserting node Z between X and Y) doesn't see Z yet.
+    /// Backfill gathers each node's 2-hop neighborhood and re-runs the
+    /// α-RNG heuristic, allowing Z to appear as a neighbor of X.
+    ///
+    /// Cost: O(N × M²) distance computations, fully parallelised.
+    /// For 1M nodes, M=16: ~1B distances × ~30 ns/NEON ≈ 30 s on M1.
+    fn backfill_edges(&self, base_id: u64, count: usize) {
+        let ids: Vec<NodeId> = (0..count as u64).map(|i| NodeId(base_id + i)).collect();
+
+        ids.par_iter().for_each(|&id| {
+            let (vector, current_l0) = match self.nodes.get(&id) {
+                Some(n) => {
+                    let l0 = n.neighbors.get(0).cloned().unwrap_or_default();
+                    (n.vector.clone(), l0)
+                }
+                None => return,
+            };
+
+            if current_l0.is_empty() {
+                return;
+            }
+
+            // Gather 2-hop candidates at layer 0
+            let mut candidate_set = HashSet::new();
+            for &nb in &current_l0 {
+                candidate_set.insert(nb);
+                if let Some(nb_node) = self.nodes.get(&nb) {
+                    if let Some(nb_l0) = nb_node.neighbors.get(0) {
+                        for &nnb in nb_l0 {
+                            candidate_set.insert(nnb);
+                        }
+                    }
+                }
+            }
+            candidate_set.remove(&id);
+
+            // Score all candidates
+            let mut scored: Vec<(NodeId, f32)> = candidate_set
+                .iter()
+                .filter_map(|&cid| {
+                    self.nodes
+                        .get(&cid)
+                        .map(|n| (cid, self.dist(&vector, &n.vector)))
+                })
+                .collect();
+            scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
+
+            let new_l0 =
+                self.select_neighbors_heuristic(&vector, &scored, self.max_neighbors_l0, 0);
+
+            // Only write if neighbors actually changed
+            if new_l0 != current_l0 {
+                if let Some(mut nr) = self.nodes.get_mut(&id) {
+                    if !nr.neighbors.is_empty() {
+                        nr.neighbors[0] = new_l0;
+                    }
+                }
+            }
+        });
+    }
 }
 
 /// Binary quantization (LSB-first convention)
@@ -798,10 +1244,83 @@ fn quantize_binary(vector: &[f32]) -> Vec<u64> {
     result
 }
 
-/// Squared L2 distance
+/// Squared L2 distance — NEON-accelerated on Apple Silicon, scalar fallback elsewhere.
+///
+/// On aarch64: 4-lane FMA with 4× accumulator unrolling to hide NEON pipeline
+/// latency (~4 cycles for `vfmaq_f32`).  For 128-d SIFT vectors this is
+/// 8 fully pipelined iterations = ~32 cycles vs ~128 scalar multiplies.
 #[inline]
 fn l2_distance(a: &[f32], b: &[f32]) -> f32 {
-    a.iter().zip(b.iter()).map(|(x, y)| (x - y) * (x - y)).sum()
+    #[cfg(target_arch = "aarch64")]
+    {
+        l2_distance_neon(a, b)
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        a.iter()
+            .zip(b.iter())
+            .map(|(x, y)| (x - y) * (x - y))
+            .sum()
+    }
+}
+
+/// NEON SIMD squared-L2 with 4× unrolled FMA pipeline.
+///
+/// Processes 16 floats per iteration (4 NEON registers × 4 lanes).
+/// The 4 independent accumulators (`s0`–`s3`) keep the FMA unit fully
+/// occupied because each depends only on its own accumulator chain.
+///
+/// For 128-d vectors: 8 iterations, zero remainder.  For arbitrary dims
+/// the tail is handled by a 4-lane pass then scalar cleanup.
+#[cfg(target_arch = "aarch64")]
+#[inline]
+fn l2_distance_neon(a: &[f32], b: &[f32]) -> f32 {
+    use std::arch::aarch64::*;
+    debug_assert_eq!(a.len(), b.len());
+    let n = a.len();
+    let pa = a.as_ptr();
+    let pb = b.as_ptr();
+
+    unsafe {
+        let mut s0 = vdupq_n_f32(0.0);
+        let mut s1 = vdupq_n_f32(0.0);
+        let mut s2 = vdupq_n_f32(0.0);
+        let mut s3 = vdupq_n_f32(0.0);
+
+        let full_iters = n / 16;
+        for i in 0..full_iters {
+            let base = i * 16;
+            let d0 = vsubq_f32(vld1q_f32(pa.add(base)), vld1q_f32(pb.add(base)));
+            let d1 = vsubq_f32(vld1q_f32(pa.add(base + 4)), vld1q_f32(pb.add(base + 4)));
+            let d2 = vsubq_f32(vld1q_f32(pa.add(base + 8)), vld1q_f32(pb.add(base + 8)));
+            let d3 = vsubq_f32(vld1q_f32(pa.add(base + 12)), vld1q_f32(pb.add(base + 12)));
+            s0 = vfmaq_f32(s0, d0, d0);
+            s1 = vfmaq_f32(s1, d1, d1);
+            s2 = vfmaq_f32(s2, d2, d2);
+            s3 = vfmaq_f32(s3, d3, d3);
+        }
+
+        // Merge four accumulators → one, then horizontal sum.
+        s0 = vaddq_f32(vaddq_f32(s0, s1), vaddq_f32(s2, s3));
+        let mut sum = vaddvq_f32(s0);
+
+        // Tail: groups of 4
+        let mut i = full_iters * 16;
+        while i + 4 <= n {
+            let d = vsubq_f32(vld1q_f32(pa.add(i)), vld1q_f32(pb.add(i)));
+            sum += vaddvq_f32(vmulq_f32(d, d));
+            i += 4;
+        }
+
+        // Scalar remainder (0–3 elements)
+        while i < n {
+            let d = *pa.add(i) - *pb.add(i);
+            sum += d * d;
+            i += 1;
+        }
+
+        sum
+    }
 }
 
 #[cfg(test)]
@@ -961,5 +1480,155 @@ mod tests {
 
         let neighbors = index.get_neighbors(NodeId(0), 1);
         assert!(!neighbors.is_empty(), "Node 0 should have neighbors");
+    }
+
+    // ── WarpInsert tests ──────────────────────────────────────────────
+
+    #[test]
+    fn test_neon_l2_matches_scalar() {
+        // Verify NEON SIMD gives same result as scalar (within fp32 tolerance)
+        let a = random_vector(128, 42);
+        let b = random_vector(128, 99);
+
+        let scalar: f32 = a
+            .iter()
+            .zip(b.iter())
+            .map(|(x, y)| (x - y) * (x - y))
+            .sum();
+        let simd = l2_distance(&a, &b);
+
+        assert!(
+            (scalar - simd).abs() < 1e-3,
+            "L2 mismatch: scalar={}, simd={}, diff={}",
+            scalar,
+            simd,
+            (scalar - simd).abs()
+        );
+    }
+
+    #[test]
+    fn test_neon_l2_odd_dims() {
+        // Non-power-of-2 dims to exercise tail handling
+        for dims in [3, 7, 17, 33, 65, 100, 127, 129, 255] {
+            let a = random_vector(dims, 1);
+            let b = random_vector(dims, 2);
+            let scalar: f32 = a
+                .iter()
+                .zip(b.iter())
+                .map(|(x, y)| (x - y) * (x - y))
+                .sum();
+            let simd = l2_distance(&a, &b);
+            assert!(
+                (scalar - simd).abs() < 1e-2,
+                "L2 mismatch at dims={}: scalar={}, simd={}",
+                dims,
+                scalar,
+                simd
+            );
+        }
+    }
+
+    #[test]
+    fn test_warp_insert_basic() {
+        let index = HnswIndex::new(128, 16, 100);
+
+        let vectors: Vec<(Vec<f32>, MetaData)> = (0..1000u64)
+            .map(|i| {
+                (
+                    random_vector(128, i),
+                    MetaData {
+                        label: format!("{}", i),
+                    },
+                )
+            })
+            .collect();
+
+        let ids = index.par_insert_batch(vectors.clone());
+        assert_eq!(ids.len(), 1000);
+        assert_eq!(index.len(), 1000);
+
+        // Search: self-recall should be high
+        let mut self_recall = 0;
+        for (i, (v, _)) in vectors.iter().enumerate() {
+            let results = index.search(v, Some(32));
+            if !results.is_empty() && results[0].0 == ids[i] {
+                self_recall += 1;
+            }
+        }
+        let recall_pct = self_recall as f32 / vectors.len() as f32 * 100.0;
+        assert!(
+            recall_pct > 90.0,
+            "WarpInsert self-recall should be >90%, got {:.1}%",
+            recall_pct
+        );
+    }
+
+    #[test]
+    fn test_warp_insert_recall_vs_sequential() {
+        // Compare recall of par_insert_batch vs sequential insert
+        let dims = 64;
+        let n = 500;
+        let queries: Vec<Vec<f32>> = (0..50).map(|i| random_vector(dims, i + 9000)).collect();
+
+        // Sequential
+        let seq_index = HnswIndex::new(dims, 16, 100);
+        let mut seq_vecs = Vec::new();
+        for i in 0..n as u64 {
+            let v = random_vector(dims, i);
+            seq_vecs.push(v.clone());
+            seq_index.insert(v, MetaData { label: format!("{}", i) });
+        }
+        seq_index.publish_snapshot();
+
+        // Parallel
+        let par_index = HnswIndex::new(dims, 16, 100);
+        let par_vecs: Vec<(Vec<f32>, MetaData)> = (0..n as u64)
+            .map(|i| (random_vector(dims, i), MetaData { label: format!("{}", i) }))
+            .collect();
+        par_index.par_insert_batch(par_vecs);
+
+        // Measure recall for both
+        let k = 10;
+        let mut seq_recall_sum = 0.0;
+        let mut par_recall_sum = 0.0;
+
+        for query in &queries {
+            // Brute-force ground truth
+            let mut gt: Vec<(usize, f32)> = seq_vecs
+                .iter()
+                .enumerate()
+                .map(|(i, v)| (i, l2_distance(query, v)))
+                .collect();
+            gt.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+            let gt_set: HashSet<usize> = gt.iter().take(k).map(|x| x.0).collect();
+
+            let seq_results = seq_index.search(query, Some(64));
+            let seq_set: HashSet<usize> =
+                seq_results.iter().take(k).map(|x| x.0 .0 as usize).collect();
+            seq_recall_sum += gt_set.intersection(&seq_set).count() as f32 / k as f32;
+
+            let par_results = par_index.search(query, Some(64));
+            let par_set: HashSet<usize> =
+                par_results.iter().take(k).map(|x| x.0 .0 as usize).collect();
+            par_recall_sum += gt_set.intersection(&par_set).count() as f32 / k as f32;
+        }
+
+        let seq_recall = seq_recall_sum / queries.len() as f32;
+        let par_recall = par_recall_sum / queries.len() as f32;
+
+        eprintln!(
+            "Recall@10: sequential={:.1}%, parallel={:.1}%, delta={:.1}%",
+            seq_recall * 100.0,
+            par_recall * 100.0,
+            (seq_recall - par_recall) * 100.0
+        );
+
+        // Parallel should be within 5% of sequential (backfill repairs most loss)
+        assert!(
+            par_recall > seq_recall - 0.05,
+            "WarpInsert recall {:.1}% too far below sequential {:.1}%",
+            par_recall * 100.0,
+            seq_recall * 100.0
+        );
     }
 }

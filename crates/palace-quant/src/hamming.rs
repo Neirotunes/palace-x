@@ -134,19 +134,17 @@ unsafe fn hamming_neon(a: &[u64], b: &[u64]) -> u32 {
 
 /// Detect and cache the best available backend at runtime
 fn detect_backend() -> HammingBackend {
-    #[cfg(target_arch = "x86_64")]
-    {
-        if is_x86_feature_detected!("avx512vpopcntdq") {
-            return HammingBackend::Avx512;
-        }
-    }
-
+    // Use cfg_attr to suppress unreachable_code on architectures where one
+    // branch makes the scalar fallback unreachable (e.g. aarch64 always returns NEON).
     #[cfg(target_arch = "aarch64")]
-    {
-        // NEON is baseline on aarch64
-        return HammingBackend::Neon;
+    return HammingBackend::Neon; // NEON is mandatory baseline on aarch64
+
+    #[cfg(target_arch = "x86_64")]
+    if is_x86_feature_detected!("avx512vpopcntdq") {
+        return HammingBackend::Avx512;
     }
 
+    #[allow(unreachable_code)]
     HammingBackend::Scalar
 }
 

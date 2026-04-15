@@ -35,8 +35,8 @@ pub struct PalaceStats {
 }
 
 impl PalaceStats {
-    /// Estimate memory for NSW graph storage
-    fn estimate_nsw_memory(total_nodes: usize, dimensions: usize, max_neighbors: usize) -> usize {
+    /// Estimate memory for HNSW graph storage
+    fn estimate_hnsw_memory(total_nodes: usize, dimensions: usize, max_neighbors: usize) -> usize {
         if total_nodes == 0 {
             return 0;
         }
@@ -70,7 +70,7 @@ impl PalaceStats {
 
     /// Estimate total memory usage
     fn estimate_total_memory(total_nodes: usize, dimensions: usize, max_neighbors: usize) -> usize {
-        let nsw_mem = Self::estimate_nsw_memory(total_nodes, dimensions, max_neighbors);
+        let nsw_mem = Self::estimate_hnsw_memory(total_nodes, dimensions, max_neighbors);
         let bitplane_mem = Self::estimate_bitplane_memory(total_nodes, dimensions);
 
         // Add overhead for hash maps, locks, etc.
@@ -98,7 +98,7 @@ impl MemoryPalace {
         let (avg_hub_score, max_hub_score, hub_count) = if total_nodes == 0 {
             (0.0, 0.0, 0)
         } else {
-            // In production, would read actual hub scores from NSW
+            // In production, would read actual hub scores from HNSW
             // For now, estimate based on network density
             let estimated_avg = 0.3; // Placeholder
             let estimated_max = 0.8; // Placeholder

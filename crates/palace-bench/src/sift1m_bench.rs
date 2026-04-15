@@ -101,6 +101,7 @@ pub fn run_sift1m_benchmark(data_dir: &Path) {
             metric: HnswDistanceMetric::L2,
             search_mode: SearchMode::Asymmetric,
             seed: 42,
+            ..Default::default()
         };
         let combined = HnswRaBitQ::new(config);
 
@@ -164,6 +165,7 @@ pub fn run_sift1m_benchmark(data_dir: &Path) {
             metric: HnswDistanceMetric::L2,
             search_mode: SearchMode::RaBitQBeam,
             seed: 42,
+            ..Default::default()
         };
         let combined_rerank = HnswRaBitQ::new(config);
 
