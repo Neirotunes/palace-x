@@ -896,6 +896,7 @@ impl HnswIndex {
     /// - Node ID, level, binary are pre-computed (avoids atomic contention).
     /// - Accepts optional `warm_ep` for layer-0 search warm-start.
     /// - Accepts `ef_override` for adaptive ef_construction.
+    #[allow(clippy::too_many_arguments)]
     fn insert_one_warp(
         &self,
         id: NodeId,
@@ -1182,7 +1183,7 @@ impl HnswIndex {
         ids.par_iter().for_each(|&id| {
             let (vector, current_l0) = match self.nodes.get(&id) {
                 Some(n) => {
-                    let l0 = n.neighbors.get(0).cloned().unwrap_or_default();
+                    let l0 = n.neighbors.first().cloned().unwrap_or_default();
                     (n.vector.clone(), l0)
                 }
                 None => return,
@@ -1197,7 +1198,7 @@ impl HnswIndex {
             for &nb in &current_l0 {
                 candidate_set.insert(nb);
                 if let Some(nb_node) = self.nodes.get(&nb) {
-                    if let Some(nb_l0) = nb_node.neighbors.get(0) {
+                    if let Some(nb_l0) = nb_node.neighbors.first() {
                         for &nnb in nb_l0 {
                             candidate_set.insert(nnb);
                         }
