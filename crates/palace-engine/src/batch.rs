@@ -63,7 +63,7 @@ mod tests {
     use super::*;
     use palace_core::SearchConfig;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_batch_ingest() {
         let engine = PalaceEngine::start(8);
 
@@ -118,7 +118,7 @@ mod tests {
         let _ = engine.shutdown().await;
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_concurrent_batch_ingestion() {
         let engine = std::sync::Arc::new(PalaceEngine::start(4));
 
