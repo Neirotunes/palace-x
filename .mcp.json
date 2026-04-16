@@ -9,7 +9,7 @@
         "--release"
       ],
       "env": {
-        "PALACE_DIMS": "128",
+        "PALACE_DIMS": "384",
         "RUST_LOG": "palace_mcp=info"
       }
     }
