@@ -729,7 +729,7 @@ mod tests {
         let code = index.encode(&vector);
 
         // Binary code should have correct length
-        assert_eq!(code.binary.len(), 1); // 64/64 = 1 u64
+        assert_eq!(code.binary.len(), 4); // 64d × 4-bit default = 4 u64
 
         // Factors should be finite and valid
         assert!(code.factors.sqr_norm.is_finite());
