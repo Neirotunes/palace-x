@@ -742,6 +742,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "builds HNSW index — slow on CI runners, run locally with -- --include-ignored"]
     fn test_basic_insert_and_search() {
         let config = HnswRaBitQConfig {
             dimensions: 32,
@@ -778,6 +779,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "builds two HNSW indices (1000 vec, ef=200) — slow on CI runners, run locally with -- --include-ignored"]
     fn test_recall_vs_pure_hnsw() {
         let dim = 64;
         let n = 1000;
@@ -847,6 +849,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "builds HNSW index (500 vec, ef=200) — slow on CI runners, run locally with -- --include-ignored"]
     fn test_with_float_rerank() {
         let dim = 64;
         let n = 500;
@@ -892,6 +895,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "builds HNSW index — slow on CI runners, run locally with -- --include-ignored"]
     fn test_memory_estimate() {
         let config = HnswRaBitQConfig {
             dimensions: 128,
