@@ -8,6 +8,12 @@
 //   • palace_search  — ANN search, returns top-k fragments
 //   • palace_stats   — index diagnostics (node count, memory, hub scores)
 //
+// Persistence:
+//   On startup, loads $PALACE_DATA_DIR/index.jsonl (default ~/.palace-x/)
+//   and replays every ingested vector back into a fresh engine.
+//   On each palace_ingest call, a WAL record is appended to the same file —
+//   so the index survives process restarts with no extra config.
+//
 // Usage (Claude Code ~/.mcp.json):
 //   {
 //     "mcpServers": {
@@ -25,17 +31,109 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, error, info, warn};
 
-// ─── Text store ──────────────────────────────────────────────────────────────
+// ─── Text store ───────────────────────────────────────────────────────────────
 
 /// Stores original text alongside ingested vectors for retrieval.
 type TextStore = Arc<RwLock<HashMap<u64, String>>>;
 
-// ─── JSON-RPC 2.0 wire types ─────────────────────────────────────────────────
+// ─── WAL persistence ──────────────────────────────────────────────────────────
+
+/// One record in the append-only WAL at `PALACE_DATA_DIR/index.jsonl`.
+/// Each line is a self-contained JSON object.
+#[derive(Debug, Serialize, Deserialize)]
+struct WalRecord {
+    vector: Vec<f32>,
+    source: String,
+    tags: Vec<String>,
+    timestamp: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    text: Option<String>,
+}
+
+/// Shared handle to the open WAL file (append mode).
+type WalFile = Arc<Mutex<tokio::fs::File>>;
+
+/// Resolve `$PALACE_DATA_DIR`, falling back to `~/.palace-x/`.
+fn data_dir() -> PathBuf {
+    if let Ok(d) = std::env::var("PALACE_DATA_DIR") {
+        return PathBuf::from(d);
+    }
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home).join(".palace-x")
+}
+
+/// Load existing WAL from `path` and replay every record into `engine` + `texts`.
+/// Returns the number of records successfully replayed.
+async fn load_wal(path: &Path, engine: &PalaceEngine, texts: &TextStore) -> std::io::Result<usize> {
+    if !path.exists() {
+        return Ok(0);
+    }
+    let file = tokio::fs::File::open(path).await?;
+    let reader = BufReader::new(file);
+    let mut lines = reader.lines();
+    let mut count = 0usize;
+
+    while let Ok(Some(line)) = lines.next_line().await {
+        let line = line.trim().to_string();
+        if line.is_empty() {
+            continue;
+        }
+        let record: WalRecord = match serde_json::from_str(&line) {
+            Ok(r) => r,
+            Err(e) => {
+                warn!("WAL: skipping malformed record: {}", e);
+                continue;
+            }
+        };
+
+        let mut metadata = MetaData::new(record.timestamp, record.source);
+        metadata.tags = record.tags;
+        if let Some(ref t) = record.text {
+            metadata.extra.insert("text".to_string(), t.clone());
+        }
+
+        match engine.ingest(record.vector, metadata).await {
+            Ok(node_id) => {
+                if let Some(t) = record.text {
+                    texts.write().await.insert(node_id.0, t);
+                }
+                count += 1;
+            }
+            Err(e) => {
+                warn!("WAL: failed to replay record #{}: {}", count, e);
+            }
+        }
+    }
+    Ok(count)
+}
+
+/// Append one WAL record to the open file (non-blocking; best-effort).
+async fn append_wal(wal: &WalFile, record: &WalRecord) {
+    let mut line = match serde_json::to_string(record) {
+        Ok(s) => s,
+        Err(e) => {
+            warn!("WAL: serialize error: {}", e);
+            return;
+        }
+    };
+    line.push('\n');
+    let mut f = wal.lock().await;
+    if let Err(e) = f.write_all(line.as_bytes()).await {
+        warn!("WAL: write error: {}", e);
+    }
+    // No explicit fsync — OS page cache durability is acceptable for an
+    // embedded agent memory. Add f.flush().await for stricter durability.
+}
+
+// ─── JSON-RPC 2.0 wire types ──────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
 struct Request {
@@ -91,7 +189,7 @@ fn tools_list() -> Value {
         "tools": [
             {
                 "name": "palace_ingest",
-                "description": "Ingest a float32 vector with metadata into the Palace-X index. Returns the assigned NodeId.",
+                "description": "Ingest a float32 vector with metadata into the Palace-X index. Returns the assigned NodeId. The vector is persisted to disk and survives process restarts.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -143,7 +241,7 @@ fn tools_list() -> Value {
             },
             {
                 "name": "palace_stats",
-                "description": "Return diagnostic statistics for the Palace-X index: node count, dimensions, memory usage, hub distribution.",
+                "description": "Return diagnostic statistics for the Palace-X index: node count, dimensions, memory usage, hub distribution, WAL path.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {}
@@ -153,7 +251,7 @@ fn tools_list() -> Value {
     })
 }
 
-// ─── Dimension validation ────────────────────────────────────────────────────
+// ─── Dimension validation ─────────────────────────────────────────────────────
 
 fn validate_vector(raw: &[Value], expected_dims: usize, tool: &str) -> Result<Vec<f32>, String> {
     if raw.len() != expected_dims {
@@ -174,11 +272,12 @@ fn validate_vector(raw: &[Value], expected_dims: usize, tool: &str) -> Result<Ve
         .collect()
 }
 
-// ─── Tool dispatch ────────────────────────────────────────────────────────────
+// ─── Tool handlers ────────────────────────────────────────────────────────────
 
 async fn handle_ingest(
     engine: &PalaceEngine,
     texts: &TextStore,
+    wal: &WalFile,
     dims: usize,
     params: Option<Value>,
 ) -> Result<Value, String> {
@@ -190,13 +289,13 @@ async fn handle_ingest(
         .ok_or("palace_ingest: 'vector' must be an array of numbers")?;
     let vector = validate_vector(raw_vec, dims, "palace_ingest")?;
 
-    // text content (optional)
+    // Optional text content
     let text = params
         .get("text")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
-    // metadata
+    // Metadata fields
     let source = params
         .get("source")
         .and_then(|v| v.as_str())
@@ -217,21 +316,31 @@ async fn handle_ingest(
         .unwrap_or_default()
         .as_secs();
 
-    let mut metadata = MetaData::new(ts, source);
-    metadata.tags = tags;
+    let mut metadata = MetaData::new(ts, source.clone());
+    metadata.tags = tags.clone();
     if let Some(ref t) = text {
         metadata.extra.insert("text".to_string(), t.clone());
     }
 
     let node_id = engine
-        .ingest(vector, metadata)
+        .ingest(vector.clone(), metadata)
         .await
         .map_err(|e| e.to_string())?;
 
-    // Store text for retrieval
-    if let Some(t) = text {
-        texts.write().await.insert(node_id.0, t);
+    // Persist text for in-memory retrieval
+    if let Some(ref t) = text {
+        texts.write().await.insert(node_id.0, t.clone());
     }
+
+    // Append to WAL — after successful ingest so we never write partial records
+    let record = WalRecord {
+        vector,
+        source,
+        tags,
+        timestamp: ts,
+        text,
+    };
+    append_wal(wal, &record).await;
 
     Ok(json!({ "node_id": node_id.0 }))
 }
@@ -267,10 +376,10 @@ async fn handle_search(
         .iter()
         .map(|f| {
             let mut entry = json!({
-                "node_id": f.node_id.0,
-                "score":   f.score,
-                "source":  f.metadata.source,
-                "tags":    f.metadata.tags,
+                "node_id":   f.node_id.0,
+                "score":     f.score,
+                "source":    f.metadata.source,
+                "tags":      f.metadata.tags,
                 "timestamp": f.metadata.timestamp,
             });
             if let Some(t) = store.get(&f.node_id.0) {
@@ -284,7 +393,11 @@ async fn handle_search(
     Ok(json!({ "results": results, "count": count }))
 }
 
-async fn handle_stats(engine: &PalaceEngine, texts: &TextStore) -> Result<Value, String> {
+async fn handle_stats(
+    engine: &PalaceEngine,
+    texts: &TextStore,
+    wal_path: &Path,
+) -> Result<Value, String> {
     let stats = engine.stats().await.map_err(|e| e.to_string())?;
     let text_count = texts.read().await.len();
     Ok(json!({
@@ -296,6 +409,7 @@ async fn handle_stats(engine: &PalaceEngine, texts: &TextStore) -> Result<Value,
         "max_hub_score":         stats.max_hub_score,
         "hub_count":             stats.hub_count,
         "text_fragments":        text_count,
+        "wal_path":              wal_path.to_string_lossy(),
     }))
 }
 
@@ -304,6 +418,8 @@ async fn handle_stats(engine: &PalaceEngine, texts: &TextStore) -> Result<Value,
 async fn dispatch(
     engine: Arc<PalaceEngine>,
     texts: TextStore,
+    wal: WalFile,
+    wal_path: Arc<PathBuf>,
     dims: usize,
     req: Request,
 ) -> Response {
@@ -348,9 +464,9 @@ async fn dispatch(
             debug!("tools/call name={}", tool_name);
 
             let result = match tool_name {
-                "palace_ingest" => handle_ingest(&engine, &texts, dims, tool_args).await,
+                "palace_ingest" => handle_ingest(&engine, &texts, &wal, dims, tool_args).await,
                 "palace_search" => handle_search(&engine, &texts, dims, tool_args).await,
-                "palace_stats" => handle_stats(&engine, &texts).await,
+                "palace_stats" => handle_stats(&engine, &texts, &wal_path).await,
                 other => Err(format!("Unknown tool: {}", other)),
             };
 
@@ -381,19 +497,15 @@ async fn dispatch(
         // ── Resources ─────────────────────────────────────────────────────────
         "resources/list" => {
             debug!("resources/list");
-            let stats = engine.stats().await;
-            let total = stats.map(|s| s.total_nodes).unwrap_or(0);
+            let total = engine.stats().await.map(|s| s.total_nodes).unwrap_or(0);
             Response::ok(
                 id,
                 json!({
                     "resources": [{
-                        "uri": "palace://index/stats",
-                        "name": "Palace-X Index Stats",
-                        "description": format!(
-                            "Index with {} vectors, {}d",
-                            total, dims
-                        ),
-                        "mimeType": "application/json"
+                        "uri":         "palace://index/stats",
+                        "name":        "Palace-X Index Stats",
+                        "description": format!("Index with {} vectors, {}d", total, dims),
+                        "mimeType":    "application/json"
                     }]
                 }),
             )
@@ -407,12 +519,12 @@ async fn dispatch(
                 .unwrap_or("");
             debug!("resources/read uri={}", uri);
             match uri {
-                "palace://index/stats" => match handle_stats(&engine, &texts).await {
+                "palace://index/stats" => match handle_stats(&engine, &texts, &wal_path).await {
                     Ok(data) => Response::ok(
                         id,
                         json!({
                             "contents": [{
-                                "uri": uri,
+                                "uri":      uri,
                                 "mimeType": "application/json",
                                 "text": serde_json::to_string_pretty(&data)
                                     .unwrap_or_else(|_| data.to_string())
@@ -454,11 +566,46 @@ async fn main() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(128);
 
-    info!("Starting palace-mcp, dims={}", dims);
+    // ── Persistence setup ─────────────────────────────────────────────────────
+    let dir = data_dir();
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        error!("Cannot create data dir {}: {}", dir.display(), e);
+        std::process::exit(1);
+    }
+    let wal_path = Arc::new(dir.join("index.jsonl"));
+    info!(
+        "Starting palace-mcp, dims={}, wal={}",
+        dims,
+        wal_path.display()
+    );
+
     let engine = Arc::new(PalaceEngine::start(dims));
     let texts: TextStore = Arc::new(RwLock::new(HashMap::new()));
 
-    // Async stdio — does not block the tokio runtime
+    // Replay WAL — rebuild index from disk
+    match load_wal(&wal_path, &engine, &texts).await {
+        Ok(0) => info!("WAL: no existing index, starting fresh"),
+        Ok(n) => info!("WAL: replayed {} records from {}", n, wal_path.display()),
+        Err(e) => {
+            error!("WAL: load error ({}), starting with empty index", e);
+        }
+    }
+
+    // Open WAL in append mode for this session
+    let wal_file = match tokio::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&*wal_path)
+        .await
+    {
+        Ok(f) => Arc::new(Mutex::new(f)),
+        Err(e) => {
+            error!("WAL: cannot open {} for writing: {}", wal_path.display(), e);
+            std::process::exit(1);
+        }
+    };
+
+    // ── Async stdio loop ──────────────────────────────────────────────────────
     let stdin = BufReader::new(tokio::io::stdin());
     let mut stdout = tokio::io::stdout();
     let mut lines = stdin.lines();
@@ -482,7 +629,16 @@ async fn main() {
 
         // MCP notifications must not receive a response
         let is_notification = req.id.is_none() || req.method.starts_with("notifications/");
-        let resp = dispatch(Arc::clone(&engine), Arc::clone(&texts), dims, req).await;
+
+        let resp = dispatch(
+            Arc::clone(&engine),
+            Arc::clone(&texts),
+            Arc::clone(&wal_file),
+            Arc::clone(&wal_path),
+            dims,
+            req,
+        )
+        .await;
 
         if !is_notification {
             match serde_json::to_string(&resp) {
