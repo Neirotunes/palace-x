@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Maksym Dyachenko <max@neirosynth.com>
+// Copyright (c) 2026 M.Diach
 // Proprietary — All Rights Reserved
 
 //! Bit-plane decomposition for f32 vectors.

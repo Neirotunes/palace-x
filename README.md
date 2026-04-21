@@ -259,7 +259,7 @@ Qdrant and Milvus are production managed services. Palace-X is an embeddable lib
 
 ## License
 
-AGPL-3.0-or-later. If you need a commercial license (proprietary deployment, no source disclosure), contact [max@neirosynth.com](mailto:max@neirosynth.com?subject=Palace-X%20Commercial%20License).
+AGPL-3.0-or-later. If you need a commercial license (proprietary deployment, no source disclosure), contact [hello@neirosynth.com](mailto:hello@neirosynth.com?subject=Palace-X%20Commercial%20License).
 
 AGPL means: embed freely, but if you run this as a network service you must publish your source. This is intentional — it's the same model Grafana, MongoDB, and Qdrant use.
 
@@ -267,6 +267,6 @@ AGPL means: embed freely, but if you run this as a network service you must publ
 
 <div align="center">
 
-Built by [Maksym Dyachenko](mailto:max@neirosynth.com) · Apple Silicon · Rust · 2026
+Built by [M.Diach](mailto:hello@neirosynth.com) · Apple Silicon · Rust · 2026
 
 </div>

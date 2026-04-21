@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Maksym Dyachenko <max@neirosynth.com>
+// Copyright (c) 2026 M.Diach
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 //! Navigable Small World (NSW) index implementation

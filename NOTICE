@@ -1,5 +1,5 @@
 Palace-X Pro — Silicon-Native Memory Engine
-Copyright (c) 2026 Maksym Dyachenko <max@neirosynth.com>
+Copyright (c) 2026 M.Diach
 Proprietary — All Rights Reserved
 
 This software is confidential and proprietary.
@@ -12,4 +12,4 @@ Contains trade secrets including but not limited to:
 - Bit-plane disaggregation (TRACE)
 - Speculative prefetch with Markov prediction
 
-Original author: Maksym Dyachenko (Neirotunes)
+Original author: M.Diach (Neirotunes)

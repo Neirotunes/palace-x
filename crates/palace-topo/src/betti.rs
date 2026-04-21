@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Maksym Dyachenko <max@neirosynth.com>
+// Copyright (c) 2026 M.Diach
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 //! Topological invariants: β₀ (connected components), β₁ (first Betti number), and Euler characteristic.
