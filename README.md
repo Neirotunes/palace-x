@@ -185,13 +185,44 @@ Query Vector (f32)
 | `palace-core` | Types: `NodeId`, `Fragment`, `MetaData`, `SearchConfig` |
 | `palace-quant` | RaBitQ 1-bit & 4-bit, NEON `vtstq_u32` kernels |
 | `palace-graph` | HNSW with α-RNG pruning, ArcSwap wait-free reads |
-| `palace-topo` | Ego-graph β₁, topological reranking |
+| `palace-topo` | Ego-graph β₁, topological reranking, Sheaf H¹ cohomology |
 | `palace-bitplane` | IEEE 754 bit-plane disaggregation |
 | `palace-storage` | `MemoryPalace` + `HnswRaBitQ` combined pipeline |
 | `palace-engine` | Async mpsc actor, batch ingestion |
 | `palace-optimizer` | UMA arena, NEON SIMD, thermal guard, Metal GPU |
 | `palace-mcp` | MCP server (JSON-RPC 2.0 over stdio) |
 | `palace-bench` | SIFT-128/1M benchmark suite |
+
+---
+
+## Sheaf Cohomology (H¹ Obstruction)
+
+`palace-topo` includes a real implementation of sheaf cohomology for detecting knowledge gaps in a graph.
+
+**Math:** For a sheaf F over graph G = (V, E), each edge carries a coboundary:
+
+```
+γ(e) = F_{u→e}·x_u − F_{v→e}·x_v
+H¹ = (1/|E|) · Σ_e ‖γ(e)‖² / (‖x_u‖² + ‖x_v‖² + ε)
+```
+
+- H¹ ≈ 0 → consistent knowledge (global section exists, signals agree)
+- H¹ >> 0 → topological gap (conflicting local knowledge, no global view)
+
+```rust
+use palace_topo::{SheafAnalyzer, Stalk, NodeId};
+
+let mut sheaf = SheafAnalyzer::new();
+sheaf.add_stalk(NodeId(0), Stalk { modality_id: "price".into(), values: vec![1.0, 0.5] });
+sheaf.add_stalk(NodeId(1), Stalk { modality_id: "price".into(), values: vec![1.0, 0.4] });
+sheaf.add_edge(NodeId(0), NodeId(1));
+
+let result = sheaf.compute_h1();
+println!("H¹ obstruction: {:.4}", result.h1_obstruction); // ~0.003 (consistent)
+println!("Consistent: {}", result.is_consistent(0.1));    // true
+```
+
+Reference: Hansen & Ghrist, ["Toward a Spectral Theory of Cellular Sheaves"](https://arxiv.org/abs/2012.06333) (2021).
 
 ---
 
@@ -203,7 +234,14 @@ Query Vector (f32)
 
 **Thermal-aware scheduling** — `ThermalGuard` reads SoC die temperature via SMC. `ThermalMonitor` publishes Combine events; the SwiftUI demo shows live °C gauge.
 
-**NEON kernels** — `vtstq_u32` for branchless 4-bit-to-mask expansion in RaBitQ (2.79M ops/s at 384d). Dual accumulator to saturate M1 pipeline. `vcntq_u8` for Hamming popcount (195M ops/s).
+**NEON kernels** — `vtstq_u32` for branchless 4-bit-to-mask expansion in RaBitQ (2.79M ops/s at 384d). Dual accumulator to saturate M1 pipeline. `vcntq_u8` for Hamming popcount (**290M ops/s**, 3ns/op, 2026-05-04 on Apple M1).
+
+| Kernel | Throughput | Latency | Backend |
+|--------|-----------|---------|---------|
+| Hamming distance (384d) | **290M ops/s** | 3 ns | NEON `vcntq_u8` |
+| Binary quantize f32→u64 (384d) | 1.16M ops/s | 862 ns | NEON |
+| Batch Hamming top-10 (10K cands) | 8,508 ops/s | 117 µs | NEON |
+| Batch Hamming top-50 (10K cands) | 11,377 ops/s | 87 µs | NEON |
 
 ---
 

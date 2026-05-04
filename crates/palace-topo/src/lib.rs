@@ -16,12 +16,14 @@ pub mod ego_graph;
 pub mod metric;
 pub mod persistence;
 pub mod reranker;
+pub mod sheaf;
 
 pub use betti::{beta_0, beta_1, euler_characteristic};
 pub use ego_graph::EgoGraph;
 pub use metric::d_total;
 pub use persistence::PersistenceDiagram;
 pub use reranker::TopologicalReranker;
+pub use sheaf::{RestrictionMap, SheafAnalyzer, SheafH1Result, Stalk};
 
 /// Re-export NodeId from palace-core for convenience
 pub use palace_core::NodeId;

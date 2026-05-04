@@ -53,7 +53,9 @@ impl PartialOrd for Candidate {
 
 impl Ord for Candidate {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.partial_cmp(other).unwrap_or(Ordering::Equal)
+        self.distance
+            .partial_cmp(&other.distance)
+            .unwrap_or(Ordering::Equal)
     }
 }
 
@@ -68,6 +70,7 @@ pub struct NswIndex {
     ef_search: AtomicUsize,         // ef during search
     hub_cache: RwLock<Vec<NodeId>>, // top-K hub nodes
     next_id: AtomicU64,
+    insert_count: AtomicUsize, // tracks inserts for periodic snapshot publish
     dimensions: usize,
     alpha: f32,             // Pruning parameter for neighbor selection
     metric: DistanceMetric, // Distance metric for graph construction & search
@@ -89,6 +92,7 @@ impl NswIndex {
             ef_search: AtomicUsize::new(64),
             hub_cache: RwLock::new(Vec::new()),
             next_id: AtomicU64::new(0),
+            insert_count: AtomicUsize::new(0),
             dimensions,
             alpha: f32::INFINITY,
             metric: DistanceMetric::Cosine,
@@ -110,6 +114,7 @@ impl NswIndex {
             ef_search: AtomicUsize::new(64),
             hub_cache: RwLock::new(Vec::new()),
             next_id: AtomicU64::new(0),
+            insert_count: AtomicUsize::new(0),
             dimensions,
             alpha,
             metric: DistanceMetric::Cosine,
@@ -127,6 +132,7 @@ impl NswIndex {
             ef_search: AtomicUsize::new(64),
             hub_cache: RwLock::new(Vec::new()),
             next_id: AtomicU64::new(0),
+            insert_count: AtomicUsize::new(0),
             dimensions,
             alpha: 1.2,
             metric: DistanceMetric::L2,
@@ -166,8 +172,8 @@ impl NswIndex {
         let mut node = GraphNode::new(node_id, vector, metadata);
 
         if self.nodes.is_empty() {
-            // First node: just insert and publish snapshot
             self.nodes.insert(node_id, node);
+            self.insert_count.fetch_add(1, AtomicOrdering::Relaxed);
             self.publish_snapshot();
             return node_id;
         }
@@ -234,7 +240,12 @@ impl NswIndex {
         }
 
         self.nodes.insert(node_id, node);
-        self.publish_snapshot();
+        // Publish snapshot every 128 inserts — O(N) cost amortized over batch.
+        // Per-insert publish was O(N²) total for N inserts.
+        let count = self.insert_count.fetch_add(1, AtomicOrdering::Relaxed) + 1;
+        if count & 127 == 0 {
+            self.publish_snapshot();
+        }
         node_id
     }
 
@@ -732,6 +743,8 @@ mod tests {
                 },
             );
         }
+
+        index.publish_snapshot();
 
         // Get 1-hop neighbors of node 0
         let neighbors = index.get_neighbors(NodeId(0), 1);
