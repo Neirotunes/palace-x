@@ -72,7 +72,7 @@ impl HotTierStore {
             .collect();
 
         // Sort by level descending — highest layers first (most accessed during descent)
-        upper_nodes.sort_by(|a, b| b.1.level.cmp(&a.1.level));
+        upper_nodes.sort_by_key(|b| std::cmp::Reverse(b.1.level));
 
         for (&node_id, node) in &upper_nodes {
             let offset = vectors.len();
