@@ -63,7 +63,8 @@ impl PartialOrd for Candidate {
 impl Ord for Candidate {
     fn cmp(&self, other: &Self) -> Ordering {
         // BinaryHeap is max-heap; we want min by distance → invert
-        other.distance
+        other
+            .distance
             .partial_cmp(&self.distance)
             .unwrap_or(Ordering::Equal)
     }

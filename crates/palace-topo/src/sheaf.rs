@@ -55,7 +55,11 @@ impl RestrictionMap {
         for i in 0..d {
             m[i * d + i] = 1.0;
         }
-        Self { matrix: m, input_dim: d, output_dim: d }
+        Self {
+            matrix: m,
+            input_dim: d,
+            output_dim: d,
+        }
     }
 
     /// Truncation projection: take the first `output_dim` components.
@@ -65,7 +69,11 @@ impl RestrictionMap {
         for i in 0..d {
             m[i * input_dim + i] = 1.0;
         }
-        Self { matrix: m, input_dim, output_dim: d }
+        Self {
+            matrix: m,
+            input_dim,
+            output_dim: d,
+        }
     }
 }
 
@@ -170,13 +178,7 @@ impl SheafAnalyzer {
     }
 
     /// γ(e) = F_{u→e}·x_u − F_{v→e}·x_v
-    fn compute_cocycle(
-        &self,
-        u: NodeId,
-        v: NodeId,
-        x_u: &[f32],
-        x_v: &[f32],
-    ) -> Vec<f32> {
+    fn compute_cocycle(&self, u: NodeId, v: NodeId, x_u: &[f32], x_v: &[f32]) -> Vec<f32> {
         let key = if u <= v { (u, v) } else { (v, u) };
         let edge_dim = x_u.len().min(x_v.len());
 
@@ -208,8 +210,12 @@ impl SheafAnalyzer {
         let mut count = 0usize;
 
         for &(u, v) in &self.edges {
-            let Some(x_u) = self.aggregate_stalk(u) else { continue };
-            let Some(x_v) = self.aggregate_stalk(v) else { continue };
+            let Some(x_u) = self.aggregate_stalk(u) else {
+                continue;
+            };
+            let Some(x_v) = self.aggregate_stalk(v) else {
+                continue;
+            };
 
             let cocycle = self.compute_cocycle(u, v, &x_u, &x_v);
 
@@ -220,7 +226,12 @@ impl SheafAnalyzer {
 
             total += obstruction;
             count += 1;
-            edge_obstructions.push(EdgeObstruction { u, v, obstruction, cocycle });
+            edge_obstructions.push(EdgeObstruction {
+                u,
+                v,
+                obstruction,
+                cocycle,
+            });
         }
 
         SheafH1Result {
@@ -245,7 +256,11 @@ impl SheafAnalyzer {
                 pairs += 1;
             }
         }
-        if pairs == 0 { 1.0 } else { total / pairs as f32 }
+        if pairs == 0 {
+            1.0
+        } else {
+            total / pairs as f32
+        }
     }
 }
 
@@ -263,15 +278,26 @@ fn cosine_sim(a: &[f32], b: &[f32]) -> f32 {
     let dot: f32 = (0..len).map(|i| a[i] * b[i]).sum();
     let na: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
     let nb: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-    if na == 0.0 || nb == 0.0 { 1.0 } else { (dot / (na * nb)).clamp(0.0, 1.0) }
+    if na == 0.0 || nb == 0.0 {
+        1.0
+    } else {
+        (dot / (na * nb)).clamp(0.0, 1.0)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn node(id: u64) -> NodeId { NodeId(id) }
-    fn stalk(vals: Vec<f32>) -> Stalk { Stalk { modality_id: "test".into(), values: vals } }
+    fn node(id: u64) -> NodeId {
+        NodeId(id)
+    }
+    fn stalk(vals: Vec<f32>) -> Stalk {
+        Stalk {
+            modality_id: "test".into(),
+            values: vals,
+        }
+    }
 
     #[test]
     fn h1_zero_for_identical_stalks() {
@@ -295,7 +321,11 @@ mod tests {
         sa.add_stalk(node(1), stalk(vec![-1.0, 0.0]));
         sa.add_edge(node(0), node(1));
         let r = sa.compute_h1();
-        assert!(r.h1_obstruction > 1.5, "opposite stalks → H¹ high, got {}", r.h1_obstruction);
+        assert!(
+            r.h1_obstruction > 1.5,
+            "opposite stalks → H¹ high, got {}",
+            r.h1_obstruction
+        );
     }
 
     #[test]
@@ -308,7 +338,11 @@ mod tests {
         sa.add_edge(node(1), node(2));
         sa.add_edge(node(2), node(3));
         let r = sa.compute_h1();
-        assert!(r.h1_obstruction < 0.1, "smooth chain → low H¹, got {}", r.h1_obstruction);
+        assert!(
+            r.h1_obstruction < 0.1,
+            "smooth chain → low H¹, got {}",
+            r.h1_obstruction
+        );
     }
 
     #[test]
@@ -366,19 +400,51 @@ mod tests {
         sa.add_stalk(node(1), stalk(vec![1.001, 0.0]));
         sa.add_edge(node(0), node(1));
         let r = sa.compute_h1();
-        assert!(r.is_consistent(0.1), "near-identical stalks should be consistent, H¹={}", r.h1_obstruction);
+        assert!(
+            r.is_consistent(0.1),
+            "near-identical stalks should be consistent, H¹={}",
+            r.h1_obstruction
+        );
     }
 
     #[test]
     fn multi_modal_aggregation() {
         // Two modalities per node — should aggregate and compute H¹
         let mut sa = SheafAnalyzer::new();
-        sa.add_stalk(node(0), Stalk { modality_id: "price".into(), values: vec![1.0, 0.0] });
-        sa.add_stalk(node(0), Stalk { modality_id: "volume".into(), values: vec![0.8, 0.2] });
-        sa.add_stalk(node(1), Stalk { modality_id: "price".into(), values: vec![1.0, 0.0] });
-        sa.add_stalk(node(1), Stalk { modality_id: "volume".into(), values: vec![0.8, 0.2] });
+        sa.add_stalk(
+            node(0),
+            Stalk {
+                modality_id: "price".into(),
+                values: vec![1.0, 0.0],
+            },
+        );
+        sa.add_stalk(
+            node(0),
+            Stalk {
+                modality_id: "volume".into(),
+                values: vec![0.8, 0.2],
+            },
+        );
+        sa.add_stalk(
+            node(1),
+            Stalk {
+                modality_id: "price".into(),
+                values: vec![1.0, 0.0],
+            },
+        );
+        sa.add_stalk(
+            node(1),
+            Stalk {
+                modality_id: "volume".into(),
+                values: vec![0.8, 0.2],
+            },
+        );
         sa.add_edge(node(0), node(1));
         let r = sa.compute_h1();
-        assert!(r.h1_obstruction < 1e-5, "identical multi-modal stalks → H¹≈0, got {}", r.h1_obstruction);
+        assert!(
+            r.h1_obstruction < 1e-5,
+            "identical multi-modal stalks → H¹≈0, got {}",
+            r.h1_obstruction
+        );
     }
 }
