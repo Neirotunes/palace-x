@@ -6,10 +6,10 @@
 
 **Vector search engine for Apple Silicon — written in Rust**
 
+[![CI](https://github.com/Neirotunes/palace-x/actions/workflows/ci.yml/badge.svg)](https://github.com/Neirotunes/palace-x/actions/workflows/ci.yml)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
 [![Rust 1.75+](https://img.shields.io/badge/Rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
 [![Platform: Apple Silicon](https://img.shields.io/badge/Platform-Apple%20Silicon%20%2F%20x86--64-lightgrey.svg)](#)
-[![MCP](https://img.shields.io/badge/MCP-Server%20included-purple.svg)](#mcp-server)
 
 HNSW graph search + RaBitQ 4-bit quantization + NEON SIMD kernels.  
 **98.7% R@10 on SIFT-1M at 1,843 QPS — same recall as float, 1.9× faster, 6.4× smaller.**
@@ -24,7 +24,7 @@ Most vector databases target x86 datacenters. Palace-X is built from the ground 
 
 The core insight: RaBitQ 4-bit asymmetric scoring lets you search with compressed distances (8× fewer FLOPS) while reranking with float, preserving recall. On M-series chips, this fits the entire distance computation inside L2 cache.
 
-**TL;DR** for the HN crowd: it's a Rust reimplementation of HNSW + RaBitQ (SIGMOD 2024) tuned specifically for aarch64, with a built-in MCP server so Claude can use it as a tool out of the box.
+**TL;DR** for the HN crowd: it's a Rust reimplementation of HNSW + RaBitQ (SIGMOD 2024) tuned specifically for aarch64, with topological reranking (β₁ ego-graph) on top.
 
 ---
 
@@ -56,45 +56,6 @@ Phase 1 (HNSW greedy descent through upper layers) uses full float L2 — this i
 | RaBitQ 1-bit distance estimate | 7.60M ops/s | NEON `vtstq_u32` |
 | Hamming distance (384d) | 195M ops/s | NEON `vcntq_u8` |
 | UMA prefetch HNSW vs standard | 1.28× speedup | ARM64 `prfm pldl1keep` |
-
----
-
-## MCP Server
-
-Palace-X ships with a built-in [MCP](https://modelcontextprotocol.io) server — Claude can use your vector index as a tool out of the box.
-
-```bash
-# Add to Claude Code in one line
-claude mcp add palace -- cargo run --bin palace-mcp --release
-```
-
-Three tools exposed:
-
-**`palace_ingest`** — add a vector to the index
-```json
-{"vector": [0.1, 0.2, ...], "source": "document", "tags": ["rust", "search"]}
-→ {"node_id": 42}
-```
-
-**`palace_search`** — ANN search, returns scored fragments
-```json
-{"vector": [0.1, 0.2, ...], "limit": 5}
-→ {"results": [{"node_id": 42, "score": 0.97, "source": "document", ...}]}
-```
-
-**`palace_stats`** — index diagnostics
-```json
-{}
-→ {"total_nodes": 10000, "memory_usage_bytes": 800000, "avg_hub_score": 0.3}
-```
-
-Demo in 30 seconds:
-```bash
-git clone https://github.com/Neirotunes/palace-x
-cd palace-x
-echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | \
-  cargo run --bin palace-mcp --release 2>/dev/null
-```
 
 ---
 
@@ -190,7 +151,6 @@ Query Vector (f32)
 | `palace-storage` | `MemoryPalace` + `HnswRaBitQ` combined pipeline |
 | `palace-engine` | Async mpsc actor, batch ingestion |
 | `palace-optimizer` | UMA arena, NEON SIMD, thermal guard, Metal GPU |
-| `palace-mcp` | MCP server (JSON-RPC 2.0 over stdio) |
 | `palace-bench` | SIFT-128/1M benchmark suite |
 
 ---
@@ -232,7 +192,7 @@ Reference: Hansen & Ghrist, ["Toward a Spectral Theory of Cellular Sheaves"](htt
 
 **Cache-aware graph layout** — upper HNSW layers packed into contiguous `Vec<f32>` fitting in L2/SLC. Layer 0 in `DashMap` for concurrent writes. ARM64 `prfm pldl1keep` issued 1 hop ahead.
 
-**Thermal-aware scheduling** — `ThermalGuard` reads SoC die temperature via SMC. `ThermalMonitor` publishes Combine events; the SwiftUI demo shows live °C gauge.
+**Thermal-aware scheduling** — `ThermalGuard` reads SoC die temperature via SMC and backs off threads before throttling.
 
 **NEON kernels** — `vtstq_u32` for branchless 4-bit-to-mask expansion in RaBitQ (2.79M ops/s at 384d). Dual accumulator to saturate M1 pipeline. `vcntq_u8` for Hamming popcount (**290M ops/s**, 3ns/op, 2026-05-04 on Apple M1).
 
@@ -267,7 +227,6 @@ The gap between standalone 75.6% and graph-assisted 98.7% is the HNSW beam carry
 | Language | Rust | C++ | Rust | Go/C++ |
 | Apple Silicon optimized | ✅ NEON-first | ⚠️ x86-primary | ✅ | ⚠️ |
 | RaBitQ 4-bit | ✅ | ❌ | ❌ | ❌ |
-| MCP server built-in | ✅ | ❌ | ❌ | ❌ |
 | Async actor API | ✅ | ❌ | ✅ | ✅ |
 | UMA Metal GPU | ✅ | ❌ | ❌ | ❌ |
 | Topological reranking | ✅ β₁ ego-graph | ❌ | ❌ | ❌ |
@@ -275,7 +234,7 @@ The gap between standalone 75.6% and graph-assisted 98.7% is the HNSW beam carry
 
 FAISS is the gold standard but its ARM path is not actively optimized — it was designed for AVX-512. Palace-X's NEON kernels are written for aarch64 first.
 
-Qdrant and Milvus are production managed services. Palace-X is an embeddable library with an MCP interface — different deployment model targeting agent workflows.
+Qdrant and Milvus are production managed services. Palace-X is an embeddable library — different deployment model targeting in-process vector search.
 
 ---
 
@@ -286,8 +245,6 @@ Qdrant and Milvus are production managed services. Palace-X is an embeddable lib
 - [x] Async actor engine (`palace-engine`)
 - [x] Metal GPU batch distance
 - [x] UMA cache-aware graph layout
-- [x] MCP server (`palace_ingest`, `palace_search`, `palace_stats`)
-- [x] SwiftUI live thermal demo (XCFramework)
 - [ ] mmap persistence (in progress)
 - [ ] Scalar quantization (8-bit)
 - [ ] Distributed sharding
