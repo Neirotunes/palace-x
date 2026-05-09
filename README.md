@@ -71,18 +71,23 @@ palace index data.jsonl --output palace.idx
 palace search '[0.1, 0.2, ...]' --top 5 --rerank
 ```
 
-Example `palace bench` output (Apple M1, 384d, 5K vectors):
+Example `palace bench` output (Apple M1, 100 vectors, synthetic — quick smoke test):
 
 ```
-⬡ Palace-X Benchmark
-  5000 vectors │ 384d │ 200 queries
-──────────────────────────────────────────────────────────
-  Hamming (NEON bitplane):    116M ops/s  │   8.6 ns/op
-  Ingest:                      11K ops/s  │  89.3 µs/op
-  Search (no rerank):          39K ops/s  │  25.6 µs/op   p99=48µs
-  Search (β₁ rerank):         481 ops/s  │   2.1 ms/op
-──────────────────────────────────────────────────────────
-  Nodes: 5000  │  Dims: 384  │  Memory: 11.0 MB  │  Hubs: 500
+| Method                    | R@10  |   QPS  |
+|---------------------------|-------|--------|
+| Brute-force cosine        | 100%  |    742 |
+| RaBitQ 4-bit (brute)      |  75%  |    855 |
+| NSW cosine (ef=256)       |  44%  |  2,421 |
+| NSW + RaBitQ-4bit (ef=256)|  40%  |  2,251 |
+```
+
+For HNSW full benchmark on SIFT-100K (98.7% R@10 @ 1,717 QPS):
+
+```bash
+cargo run -p palace-bench --release
+# SIFT-1M (auto-downloads ~170 MB):
+RUN_SIFT1M_BENCH=1 cargo run -p palace-bench --release
 ```
 
 `palace index` accepts JSONL files with pre-computed embeddings:
