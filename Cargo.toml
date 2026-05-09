@@ -10,6 +10,7 @@ members = [
     "crates/palace-engine",
     "crates/palace-bench",
     "crates/palace-optimizer",
+    "crates/palace-cli",
 ]
 
 [workspace.package]

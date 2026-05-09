@@ -1,0 +1,31 @@
+[package]
+name = "palace-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "palace — CLI for Palace-X topological vector search"
+repository = "https://github.com/Neirotunes/palace-x"
+keywords = ["vector-search", "hnsw", "neon-simd", "topological", "cli"]
+categories = ["command-line-utilities", "algorithms"]
+default-run = "palace"
+
+[[bin]]
+name = "palace"
+path = "src/main.rs"
+
+[dependencies]
+palace-core    = { workspace = true }
+palace-graph   = { workspace = true }
+palace-quant   = { workspace = true }
+palace-topo    = { workspace = true }
+palace-engine  = { workspace = true }
+palace-optimizer = { workspace = true }
+
+tokio          = { workspace = true }
+serde          = { workspace = true }
+serde_json     = { workspace = true }
+clap           = { version = "4", features = ["derive", "color"] }
+indicatif      = "0.17"
+colored        = "2"
+rand           = { workspace = true }
