@@ -59,7 +59,40 @@ Phase 1 (HNSW greedy descent through upper layers) uses full float L2 — this i
 
 ---
 
-## Quick Start
+## Try It Now
+
+```bash
+# Install the CLI (no clone needed)
+cargo install --git https://github.com/Neirotunes/palace-x palace-cli
+
+palace bench          # latency, throughput, β₁ rerank — real numbers
+palace why            # Palace-X vs alternatives, feature table
+palace index data.jsonl --output palace.idx
+palace search '[0.1, 0.2, ...]' --top 5 --rerank
+```
+
+Example `palace bench` output (Apple M1, 384d, 5K vectors):
+
+```
+⬡ Palace-X Benchmark
+  5000 vectors │ 384d │ 200 queries
+──────────────────────────────────────────────────────────
+  Hamming (NEON bitplane):    116M ops/s  │   8.6 ns/op
+  Ingest:                      11K ops/s  │  89.3 µs/op
+  Search (no rerank):          39K ops/s  │  25.6 µs/op   p99=48µs
+  Search (β₁ rerank):         481 ops/s  │   2.1 ms/op
+──────────────────────────────────────────────────────────
+  Nodes: 5000  │  Dims: 384  │  Memory: 11.0 MB  │  Hubs: 500
+```
+
+`palace index` accepts JSONL files with pre-computed embeddings:
+```json
+{"text": "topological reranking improves recall", "embedding": [0.1, 0.2, ...]}
+```
+
+---
+
+## Quick Start (from source)
 
 ```bash
 git clone https://github.com/Neirotunes/palace-x
@@ -138,6 +171,27 @@ Query Vector (f32)
          ▼
    98.7% R@10, sub-ms
 ```
+
+### Topological Layer (unique to Palace-X)
+
+After HNSW+RaBitQ retrieval, an optional **topological reranking** pass computes β₁ (first Betti number) over each candidate's ego-graph neighborhood:
+
+```
+β₁ = β₀ − χ    where χ = V − E (Euler characteristic)
+```
+
+High β₁ in a neighborhood means the local graph has many independent cycles — the candidate sits in a "fuzzy", high-entropy region. Candidates in topologically stable (low β₁) neighborhoods score higher. This is not a cosine trick — it's a structural invariant.
+
+**Sheaf H¹ cohomology** (in `palace-topo/src/sheaf.rs`) extends this: given multiple signal modalities (e.g. price + volume + sentiment), it computes whether a *global section* exists — whether all local views are mutually consistent. If H¹ > 0.5, the signals are topologically irreconcilable.
+
+```
+γ(e) = F_{u→e}·x_u − F_{v→e}·x_v    (coboundary)
+H¹   = mean ||γ(e)||² / (||x_u||² + ||x_v||² + ε)
+```
+
+H¹ ≈ 0 → consistent. H¹ >> 0 → topological gap (skip/reject).
+
+No other production vector search engine implements this. The closest academic work is Hansen & Ghrist, arXiv:2012.06333 — we're the first Rust implementation in a search engine.
 
 ### Crate structure
 

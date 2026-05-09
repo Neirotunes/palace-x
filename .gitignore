@@ -33,3 +33,4 @@ alpha_results.txt
 .claude/
 gen_pptx.py
 logo.png
+.fastembed_cache/
