@@ -284,15 +284,14 @@ fn why() {
         ("Search latency (5K, 384d)",         "12µs",     "50-200µs"),
         ("AI-generated code ratio",           "0%",       "88%"),
     ];
-    println!("  {:<38} {:<12} {}", "Feature".dimmed(), "Palace-X".cyan(), "RuVector".red());
+    println!("  {:<38} {:<12} {}", "Feature".dimmed(), "Palace-X".cyan(), "Others".dimmed());
     println!("{}", "─".repeat(58).dimmed());
     for (feat, ours, theirs) in rows {
         println!("  {:<38} {:<12} {}", feat, ours.green(), theirs.red());
     }
     println!("{}", "─".repeat(58).dimmed());
-    println!("  All benchmarks: {} │ Prior art: {}",
-        "github.com/Neirotunes/palace-x".underline(),
-        "github.com/Neirotunes/ruvector-ip-theft-exposure".underline());
+    println!("  All benchmarks: {}",
+        "github.com/Neirotunes/palace-x".underline());
     println!();
 }
 
